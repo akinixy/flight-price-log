@@ -1,0 +1,10 @@
+node_modules/
+dist/
+.superpowers/
+docs/superpowers/
+.preview-*.png
+test/.preview-*.png
+preview-popup.html
+.claude/settings.local.json
+Thumbs.db
+.DS_Store

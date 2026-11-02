@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>隐私政策 · 航班价格记录簿</title>
+  <meta name="description" content="航班价格记录簿浏览器扩展的隐私政策：数据只保存在本机，不上传、不共享。">
+  <style>
+    :root {
+      color-scheme: light dark;
+      --bg: #f6f8fb;
+      --card: #ffffff;
+      --text: #1f2937;
+      --muted: #6b7280;
+      --accent: #2563eb;
+      --border: #e5e7eb;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      padding: 32px 20px 64px;
+      background: var(--bg);
+      color: var(--text);
+      font: 16px/1.75 -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+        "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+    }
+
+    main {
+      max-width: 760px;
+      margin: 0 auto;
+      padding: 40px 44px;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      box-shadow: 0 8px 30px rgba(15, 23, 42, 0.06);
+    }
+
+    .eyebrow {
+      margin: 0 0 8px;
+      color: var(--accent);
+      font-size: 13px;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    h1 {
+      margin: 0 0 8px;
+      font-size: 32px;
+      line-height: 1.25;
+    }
+
+    .meta {
+      margin: 0 0 28px;
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    h2 {
+      margin: 32px 0 12px;
+      font-size: 20px;
+      line-height: 1.4;
+    }
+
+    p, ul { margin: 0 0 14px; }
+
+    ul { padding-left: 22px; }
+
+    li { margin-bottom: 6px; }
+
+    code {
+      padding: 1px 5px;
+      background: rgba(37, 99, 235, 0.08);
+      border-radius: 4px;
+      font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+      font-size: 0.92em;
+    }
+
+    a { color: var(--accent); }
+
+    hr {
+      margin: 40px 0 28px;
+      border: 0;
+      border-top: 1px solid var(--border);
+    }
+
+    .disclaimer {
+      margin-top: 28px;
+      padding: 14px 16px;
+      background: rgba(107, 114, 128, 0.08);
+      border-radius: 10px;
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    footer {
+      margin-top: 36px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #0f172a;
+        --card: #111827;
+        --text: #e5e7eb;
+        --muted: #9ca3af;
+        --accent: #60a5fa;
+        --border: #1f2937;
+      }
+    }
+
+    @media (max-width: 640px) {
+      body { padding: 16px 12px 40px; }
+      main { padding: 28px 22px; border-radius: 12px; }
+      h1 { font-size: 26px; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <p class="eyebrow">航班价格记录簿</p>
+    <h1>隐私政策</h1>
+    <p class="meta">生效日期：2026 年 11 月 2 日 · 最后更新：2026 年 11 月 2 日</p>
+
+    <p>「航班价格记录簿」是一款 Chrome / Edge 浏览器扩展（以下简称“本扩展”）。本扩展不是携程官方产品，与携程无关联。本政策说明本扩展处理哪些信息、如何存储，以及你可以如何控制这些信息。</p>
+
+    <h2>1. 本扩展处理的信息</h2>
+    <p>当你打开携程中国大陆国内单程航班列表页（<code>flights.ctrip.com/online/list/*</code>）时，本扩展会读取页面中已经展示的以下信息，用于生成价格记录：</p>
+    <ul>
+      <li>航线（出发地、目的地）、出发日期、舱位；</li>
+      <li>航班价格、航班号、航空公司、起降时间、中转或经停信息；</li>
+      <li>记录时间，以及同一航线、日期、舱位下的历史价格点。</li>
+    </ul>
+    <p>本扩展还会在本地保存你的设置（是否开启自动采集），以及你主动导出或导入的 JSON 备份文件中的上述记录。</p>
+    <p>本扩展<strong>不会</strong>收集你的姓名、账号、手机号、身份证件、支付信息、精确位置、携程登录凭据或 Cookies，也不会读取当前航班列表页之外的浏览记录。</p>
+
+    <h2>2. 信息如何存储</h2>
+    <p>所有记录只保存在你当前浏览器配置文件的 <code>chrome.storage.local</code> 中，不会上传到任何服务器。本扩展不包含统计、广告、崩溃上报或任何第三方 SDK，也不会发起网络请求。</p>
+    <p>为了控制占用，同一航线、日期、舱位在 30 分钟内的多次记录会合并为一个价格点；单条航线最多保留 1000 个价格点和 200 条航班明细；最多保存 100 条航线，超出时淘汰最久未更新的航线。</p>
+
+    <h2>3. 信息如何使用</h2>
+    <ul>
+      <li>在扩展弹窗中展示当前价格、历史最低价、价差、趋势和最近一次航班明细；</li>
+      <li>按价格、用时、起飞时间排序，帮助你比较航班；</li>
+      <li>在你主动操作时导出或导入本地 JSON 备份。</li>
+    </ul>
+    <p>我们不会将上述信息用于广告、用户画像或信用评估，也不会出售、出租或共享给任何第三方。</p>
+
+    <h2>4. 权限说明</h2>
+    <ul>
+      <li><strong>storage</strong>：在本机保存价格记录和设置。</li>
+      <li><strong>flights.ctrip.com/online/list/*</strong>：读取航班列表页中已展示的价格与航班信息，用于本地记录。</li>
+    </ul>
+    <p>本扩展不申请 <code>tabs</code>、<code>notifications</code>、<code>webRequest</code> 等权限，也不会在后台定时访问携程。</p>
+
+    <h2>5. 你的控制权</h2>
+    <ul>
+      <li>在弹窗设置中关闭自动采集；关闭后仍会记录你手动浏览到的航班。</li>
+      <li>删除单条航线，或在弹窗中清空全部记录。</li>
+      <li>卸载扩展；浏览器会删除该扩展的本地存储数据。</li>
+      <li>随时导出 JSON 备份，备份文件由你自行保管。</li>
+    </ul>
+
+    <h2>6. 数据保留与删除</h2>
+    <p>记录会一直保存在本机，直到你在弹窗中删除、清空，或卸载扩展。删除操作不可恢复；如有需要，请先导出备份。</p>
+
+    <h2>7. 儿童</h2>
+    <p>本扩展不面向儿童，也不会主动收集儿童的个人信息。</p>
+
+    <h2>8. 政策更新</h2>
+    <p>如果本扩展的数据处理方式发生变化，我们会更新本页面并修改“最后更新”日期。重大变化会在扩展更新说明中提示。</p>
+
+    <h2>9. 联系方式</h2>
+    <p>如对本政策有疑问，请通过 GitHub Issues 联系：<a href="https://github.com/akinixy/flight-price-log/issues">github.com/akinixy/flight-price-log/issues</a>。</p>
+
+    <p class="disclaimer">本扩展为非官方工具，与携程旅行网无隶属、合作或授权关系。携程及相关商标归其权利人所有。</p>
+
+    <hr>
+
+    <h2>English summary</h2>
+    <p>Flight Price Log is an unofficial browser extension. It reads flight prices and flight details displayed on Ctrip's domestic one-way flight list pages and stores them only in your browser's local storage. It does not collect, transmit, sell, or share personal data, and it makes no network requests. You can disable automatic collection, delete individual routes, clear all data in the popup, or uninstall the extension. Contact: <a href="https://github.com/akinixy/flight-price-log/issues">GitHub Issues</a>.</p>
+
+    <footer>航班价格记录簿 · 本页面可公开访问，供浏览器扩展商店审核与用户查阅。</footer>
+  </main>
+</body>
+</html>

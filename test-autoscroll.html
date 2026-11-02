@@ -1,0 +1,332 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="virtual-time-budget" content="20000">
+<title>自动滚动采集测试</title>
+<style>
+  body { font-family: system-ui, "Microsoft YaHei", sans-serif; font-size: 14px; }
+  #result { white-space: pre-wrap; }
+  #result[data-result="fail"] { color: #b42318; }
+  #scroller { height: 120px; overflow-y: auto; border: 1px solid #ccc; }
+  .item { height: 50px; line-height: 50px; padding-left: 8px; }
+</style>
+</head>
+<body>
+<h1>自动滚动采集测试</h1>
+<div id="scroller"></div>
+<div id="result" data-result="fail">running</div>
+
+<script src="src/content/autoscroll.js"></script>
+<script>
+(function () {
+  "use strict";
+
+  var passed = 0;
+  var failures = [];
+  var result = document.getElementById("result");
+
+  function assertEqual(name, actual, expected) {
+    if (JSON.stringify(actual) === JSON.stringify(expected)) {
+      passed += 1;
+    } else {
+      failures.push(
+        name + "：期望 " + JSON.stringify(expected) + "，实际 " + JSON.stringify(actual)
+      );
+    }
+  }
+
+  var currentStep = "start";
+  function step(name) {
+    currentStep = name;
+    result.textContent = "running: " + name + "（已通过 " + passed + " 项）";
+  }
+
+  function wait(ms) {
+    return new Promise(function (resolve) {
+      setTimeout(resolve, ms);
+    });
+  }
+
+  // delayMs 模拟携程接口响应时间：滚动触发后要过一会儿才追加下一批。
+  function buildScroller(options) {
+    options = options || {};
+    var scroller = document.getElementById("scroller");
+    scroller.textContent = "";
+    scroller.scrollTop = 0;
+    var appended = 0;
+    var total = options.total === undefined ? 16 : options.total;
+    var batch = options.batch || 4;
+    var delayMs = options.delayMs || 0;
+    var enabled = options.enabled !== false;
+    var pending = false;
+
+    function appendBatch(size) {
+      for (var i = 0; i < size && appended < total; i += 1) {
+        var item = document.createElement("div");
+        item.className = "item";
+        item.setAttribute("data-no", "CA" + (1000 + appended));
+        appended += 1;
+        scroller.appendChild(item);
+      }
+    }
+
+    appendBatch(batch);
+
+    scroller.addEventListener("scroll", function () {
+      if (!enabled || pending || appended >= total) return;
+      var atBottom =
+        scroller.scrollTop + scroller.clientHeight >= scroller.scrollHeight - 2;
+      if (!atBottom) return;
+
+      pending = true;
+      var load = function () {
+        appendBatch(batch);
+        pending = false;
+      };
+      if (delayMs > 0) setTimeout(load, delayMs);
+      else load();
+    });
+
+    return scroller;
+  }
+
+  function itemCount(node) {
+    return node.querySelectorAll(".item").length;
+  }
+
+  async function run() {
+    step("1-scroll-target");
+    // 1. 找到滚动容器。
+    var scroller = buildScroller();
+    var target = CtripAutoScroll.findScrollTarget(scroller.querySelector(".item"));
+    assertEqual("识别滚动容器", target === scroller, true);
+
+    step("2-full-collect");
+    // 2. 分四批全部采集，结束后恢复滚动位置。
+    scroller.scrollTop = 0;
+    var outcome = await CtripAutoScroll.collect({
+      target: target,
+      listNode: scroller,
+      count: function () { return itemCount(scroller); },
+      stepTimeoutMs: 400,
+      idleRounds: 2,
+      maxRounds: 40,
+      respectUserInput: false,
+    });
+    assertEqual("采集到全部条目", outcome.count, 16);
+    assertEqual("因空闲结束", outcome.stopped, "idle");
+    assertEqual("结束时恢复滚动位置", scroller.scrollTop, 0);
+
+    step("3-slow");
+    // 3. 接口响应慢于单个事件时也要等到，不能误判为没有更多。
+    var slowScroller = buildScroller({ delayMs: 80, total: 16, batch: 4 });
+    var slowOutcome = await CtripAutoScroll.collect({
+      target: slowScroller,
+      listNode: slowScroller,
+      count: function () { return itemCount(slowScroller); },
+      stepTimeoutMs: 300,
+      idleRounds: 2,
+      maxRounds: 40,
+      respectUserInput: false,
+    });
+    assertEqual("慢接口采集完整", slowOutcome.count, 16);
+    assertEqual("慢接口正常结束", slowOutcome.stopped, "idle");
+
+    step("4-event-driven");
+    // 4. 事件驱动：内容变化时立即返回，而不是每轮干等到超时。
+    var eventScroller = buildScroller({ delayMs: 20, total: 8, batch: 4 });
+    var measureCalls = 0;
+    function countedMeasure() {
+      measureCalls += 1;
+      return eventScroller.scrollHeight + itemCount(eventScroller);
+    }
+    var EVENT_TIMEOUT_MS = 300;
+    var startedAt = Date.now();
+    var eventOutcome = await CtripAutoScroll.collect({
+      target: eventScroller,
+      listNode: eventScroller,
+      count: function () { return itemCount(eventScroller); },
+      measure: countedMeasure,
+      stepTimeoutMs: EVENT_TIMEOUT_MS,
+      idleRounds: 2,
+      maxRounds: 40,
+      respectUserInput: false,
+    });
+    var elapsed = Date.now() - startedAt;
+    assertEqual("事件驱动采集完整", eventOutcome.count, 8);
+    // 每轮都干等超时的话总耗时会接近 轮数×300ms；事件驱动应远低于此。
+    assertEqual(
+      "事件驱动比逐轮干等快",
+      elapsed < eventOutcome.rounds * EVENT_TIMEOUT_MS * 0.8,
+      true
+    );
+    // 宽松上限：只排除“高频轮询”（原先 200ms 轮询会达到几十次）。
+    assertEqual("事件驱动没有高频轮询", measureCalls < 60, true);
+
+    step("5-on-batch");
+    // 5. 滚动中每批都会回调 onBatch，便于边滚边合并。
+    var mergeScroller = buildScroller({ total: 16, batch: 4 });
+    var batches = [];
+    await CtripAutoScroll.collect({
+      target: mergeScroller,
+      listNode: mergeScroller,
+      count: function () { return itemCount(mergeScroller); },
+      stepTimeoutMs: 200,
+      idleRounds: 2,
+      maxRounds: 40,
+      respectUserInput: false,
+      onBatch: function (info) { batches.push(info.count); },
+    });
+    assertEqual("滚动中多次回调", batches.length >= 3, true);
+
+    step("6-user-interrupt");
+    // 6. 用户操作优先：采集过程中用户滚动页面应立即让出控制权，且不拉回原位。
+    var userScroller = buildScroller({ total: 40, batch: 4 });
+    var userRun = CtripAutoScroll.collect({
+      target: userScroller,
+      listNode: userScroller,
+      count: function () { return itemCount(userScroller); },
+      stepTimeoutMs: 300,
+      idleRounds: 2,
+      maxRounds: 40,
+    });
+    await wait(30);
+    userScroller.scrollTop = 37;
+    window.dispatchEvent(new WheelEvent("wheel", { deltaY: 120 }));
+    var userOutcome = await userRun;
+    assertEqual("用户操作后中断", userOutcome.stopped, "user-interrupted");
+    assertEqual("中断后不拉回滚动位置", userScroller.scrollTop, 37);
+
+    step("7-static");
+    // 7. 没有新增内容时尽快结束。
+    var staticScroller = buildScroller({ enabled: false });
+    var staticOutcome = await CtripAutoScroll.collect({
+      target: staticScroller,
+      listNode: staticScroller,
+      count: function () { return itemCount(staticScroller); },
+      stepTimeoutMs: 60,
+      idleRounds: 2,
+      maxRounds: 30,
+      respectUserInput: false,
+    });
+    assertEqual("静态列表数量不变", staticOutcome.count, 4);
+    assertEqual("静态列表提前结束", staticOutcome.stopped, "idle");
+
+    step("8-external-stop");
+    // 8. URL 变化等外部中断信号生效，且不拉回滚动位置。
+    var interruptScroller = buildScroller();
+    interruptScroller.scrollTop = 25;
+    var interrupted = await CtripAutoScroll.collect({
+      target: interruptScroller,
+      listNode: interruptScroller,
+      count: function () { return itemCount(interruptScroller); },
+      stepTimeoutMs: 60,
+      idleRounds: 5,
+      maxRounds: 30,
+      respectUserInput: false,
+      shouldStop: function () { return true; },
+    });
+    assertEqual("外部中断时停止", interrupted.stopped, "interrupted");
+    assertEqual("外部中断时不拉回滚动位置", interruptScroller.scrollTop, 25);
+
+    step("9-max-rounds");
+    // 9. 轮数上限生效。
+    var capScroller = buildScroller({ total: 400, batch: 4 });
+    var capped = await CtripAutoScroll.collect({
+      target: capScroller,
+      listNode: capScroller,
+      count: function () { return itemCount(capScroller); },
+      stepTimeoutMs: 40,
+      idleRounds: 10,
+      maxRounds: 2,
+      respectUserInput: false,
+    });
+    assertEqual("达到轮数上限", capped.stopped, "max-rounds");
+
+    step("10-describe");
+    // 9b. 总时长预算生效，正常结束仍恢复滚动位置（用假时钟避免虚拟时间不稳定）。
+    var budgetScroller = buildScroller({ total: 400, batch: 4, delayMs: 10 });
+    var fakeClock = 0;
+    var budgetOutcome = await CtripAutoScroll.collect({
+      target: budgetScroller,
+      listNode: budgetScroller,
+      count: function () { return itemCount(budgetScroller); },
+      stepTimeoutMs: 30,
+      idleRounds: 10,
+      maxRounds: 100,
+      maxDurationMs: 50,
+      now: function () {
+        fakeClock += 30;
+        return fakeClock;
+      },
+      respectUserInput: false,
+    });
+    assertEqual("达到总时长预算", budgetOutcome.stopped, "timeout");
+    assertEqual("预算结束恢复滚动位置", budgetScroller.scrollTop, 0);
+
+    // 9c. 同时识别祖先与列表内部的可滚动容器。
+    var outer = document.createElement("div");
+    outer.style.cssText = "height:120px;overflow-y:auto;";
+    var inner = document.createElement("div");
+    inner.style.cssText = "height:100px;overflow-y:auto;";
+    var innerContent = document.createElement("div");
+    innerContent.style.height = "300px";
+    inner.appendChild(innerContent);
+    var spacer = document.createElement("div");
+    spacer.style.height = "200px";
+    outer.appendChild(inner);
+    outer.appendChild(spacer);
+    document.body.appendChild(outer);
+    var nestedTargets = CtripAutoScroll.findScrollTargets(inner);
+    assertEqual(
+      "识别嵌套滚动容器",
+      nestedTargets.indexOf(inner) >= 0 && nestedTargets.indexOf(outer) >= 0,
+      true
+    );
+    outer.remove();
+
+    var wrapper = document.createElement("div");
+    wrapper.className = "result-wrapper";
+    var innerScroller = document.createElement("div");
+    innerScroller.style.cssText = "height:80px;overflow-y:auto;";
+    var flightItem = document.createElement("div");
+    flightItem.className = "flight-item";
+    flightItem.style.height = "200px";
+    innerScroller.appendChild(flightItem);
+    wrapper.appendChild(innerScroller);
+    document.body.appendChild(wrapper);
+    var descendantTargets = CtripAutoScroll.findScrollTargets(wrapper);
+    assertEqual(
+      "识别列表内部滚动容器",
+      descendantTargets.indexOf(innerScroller) >= 0,
+      true
+    );
+    wrapper.remove();
+
+    // 10. 描述滚动容器，便于在真实页面排查。
+    var described = CtripAutoScroll.describeTarget(scroller);
+    assertEqual("描述包含标签名", described.indexOf("div") === 0, true);
+    assertEqual("描述包含 id", described.indexOf("#scroller") >= 0, true);
+  }
+
+  run()
+    .then(function () {
+      if (failures.length) {
+        result.setAttribute("data-result", "fail");
+        result.textContent =
+          "FAIL: " + failures.length + " 项失败\n" + failures.join("\n");
+      } else {
+        result.setAttribute("data-result", "pass");
+        result.textContent = "PASS: " + passed;
+      }
+    })
+    .catch(function (error) {
+      result.setAttribute("data-result", "fail");
+      result.textContent =
+        "FAIL: " + (error && error.message ? error.message : String(error));
+    });
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>图表模块测试</title>
+<style>
+  body {
+    margin: 24px;
+    font-family: system-ui, "Microsoft YaHei", sans-serif;
+    font-size: 14px;
+  }
+  #result { white-space: pre-wrap; }
+  #result[data-result="fail"] { color: #b42318; }
+  #preview { margin-top: 24px; }
+  .preview-block { margin-bottom: 20px; }
+  .preview-label { margin-bottom: 6px; color: #555; font-size: 12px; }
+  .preview-row { display: flex; align-items: center; gap: 12px; }
+  .chart-card {
+    padding: 8px;
+    border: 1px solid #e5e7eb;
+    border-radius: 8px;
+    background: #fff;
+  }
+</style>
+</head>
+<body>
+<h1>图表模块测试</h1>
+<div id="result" data-result="fail">运行中…</div>
+
+<div id="preview">
+  <div class="preview-block">
+    <div class="preview-label">折线图（7 条记录）</div>
+    <div class="chart-card" id="preview-line"></div>
+  </div>
+  <div class="preview-block">
+    <div class="preview-label">迷你趋势（近 20 条记录）</div>
+    <div class="preview-row">
+      <div class="chart-card" id="preview-spark"></div>
+    </div>
+  </div>
+</div>
+
+<script src="src/shared/format.js"></script>
+<script src="src/popup/chart.js"></script>
+<script>
+(function () {
+  "use strict";
+
+  var passed = 0;
+  var failures = [];
+  var fatal = null;
+
+  function check(name, condition) {
+    if (condition) {
+      passed += 1;
+    } else {
+      failures.push(name);
+    }
+  }
+
+  // 序列化结果里绝不能出现 NaN / Infinity。
+  function hasBadNumber(svg) {
+    return /NaN|Infinity/.test(svg.outerHTML);
+  }
+
+  function localTime(day, hour) {
+    return new Date(2026, 9, day, hour, 0, 0).getTime();
+  }
+
+  try {
+    // 用例 1：1 个点，返回 svg、包含提示文本、不抛错。
+    var single = [{ t: localTime(20, 8), minPrice: 680 }];
+    var singleChart = null;
+    var singleThrew = false;
+    try {
+      singleChart = CtripChart.buildLineChart(single);
+    } catch (error) {
+      singleThrew = true;
+    }
+    check("1 个点不抛错", !singleThrew);
+    check(
+      "1 个点返回 <svg>",
+      !!singleChart && singleChart.tagName.toLowerCase() === "svg"
+    );
+    check(
+      "1 个点包含提示文本",
+      !!singleChart &&
+        singleChart.textContent.indexOf("仅 1 条记录") !== -1
+    );
+    check(
+      "单点图表使用紧凑高度",
+      !!singleChart && Number(singleChart.getAttribute("height")) <= 48
+    );
+    check(
+      "单点图表不绘制坐标轴和圆点",
+      !!singleChart &&
+        !singleChart.querySelector("polyline") &&
+        !singleChart.querySelector("circle")
+    );
+
+    // 用例 2：3 个点，1 条折线、3 个圆点，序列化无 NaN / Infinity。
+    var three = [
+      { t: localTime(20, 8), minPrice: 820 },
+      { t: localTime(21, 8), minPrice: 760 },
+      { t: localTime(22, 8), minPrice: 710 },
+    ];
+    var threeChart = CtripChart.buildLineChart(three);
+    check(
+      "3 个点有且只有 1 条折线",
+      threeChart.querySelectorAll("polyline").length === 1
+    );
+    check(
+      "3 个点有 3 个圆点",
+      threeChart.querySelectorAll("circle").length === 3
+    );
+    check("3 个点无 NaN / Infinity", !hasBadNumber(threeChart));
+
+    // 用例 3：3 个相同价格，仍有折线且无 NaN。
+    var equalPrices = [
+      { t: localTime(20, 8), minPrice: 680 },
+      { t: localTime(21, 8), minPrice: 680 },
+      { t: localTime(22, 8), minPrice: 680 },
+    ];
+    var equalChart = CtripChart.buildLineChart(equalPrices);
+    check("相同价格仍有折线", equalChart.querySelector("polyline") !== null);
+    check("相同价格无 NaN", !hasBadNumber(equalChart));
+
+    // 用例 4：25 个点，Sparkline 只使用最后 20 个点。
+    var many = [];
+    for (var i = 0; i < 25; i += 1) {
+      many.push({
+        t: localTime(1, 0) + i * 60 * 60 * 1000,
+        minPrice: 600 + (i % 7) * 25,
+      });
+    }
+    var sparkline = CtripChart.buildSparkline(many);
+    var sparkPolyline = sparkline.querySelector("polyline");
+    var sparkPairs = sparkPolyline
+      ? sparkPolyline.getAttribute("points").trim().split(/\s+/)
+      : [];
+    check("Sparkline 只画最后 20 个点", sparkPairs.length === 20);
+
+    // 仅用于截图目检，不参与断言。
+    var demo = [
+      { t: localTime(20, 8), minPrice: 820 },
+      { t: localTime(21, 8), minPrice: 760 },
+      { t: localTime(22, 8), minPrice: 790 },
+      { t: localTime(23, 8), minPrice: 710 },
+      { t: localTime(24, 8), minPrice: 735 },
+      { t: localTime(25, 8), minPrice: 690 },
+      { t: localTime(26, 8), minPrice: 665 },
+    ];
+    document.getElementById("preview-line").appendChild(
+      CtripChart.buildLineChart(demo)
+    );
+    document.getElementById("preview-spark").appendChild(
+      CtripChart.buildSparkline(many)
+    );
+  } catch (error) {
+    fatal = error && error.message ? error.message : String(error);
+  }
+
+  var result = document.getElementById("result");
+
+  if (fatal) {
+    result.setAttribute("data-result", "fail");
+    result.textContent =
+      "FAIL: " + fatal +
+      (failures.length ? "\n" + failures.join("\n") : "") +
+      "\n通过 " + passed + " 项";
+  } else if (failures.length) {
+    result.setAttribute("data-result", "fail");
+    result.textContent =
+      "FAIL: " + failures.length + " 项失败\n" + failures.join("\n");
+  } else {
+    result.setAttribute("data-result", "pass");
+    result.textContent = "PASS: " + passed;
+  }
+})();
+</script>
+</body>
+</html>

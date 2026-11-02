@@ -1,0 +1,710 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>弹窗 UI 测试</title>
+<link rel="stylesheet" href="src/popup/popup.css">
+<style>
+  #result {
+    margin: 12px;
+    padding: 8px;
+    border-radius: 6px;
+    background: #fff;
+    font: 12px/1.6 Consolas, "Microsoft YaHei", monospace;
+    white-space: pre-wrap;
+  }
+  #result[data-result="fail"] {
+    color: #b42318;
+    border: 1px solid #fecaca;
+  }
+  #result[data-result="pass"] {
+    color: #067647;
+    border: 1px solid #bbf7d0;
+  }
+</style>
+</head>
+<body>
+<div id="app"></div>
+<div id="result" data-result="fail">运行中…</div>
+
+<script>
+(function () {
+  "use strict";
+
+  var ROUTE_A_KEY = "oneway:YIH-CGQ:2026-11-12:y_s_c_f";
+  var ROUTE_B_KEY = "oneway:YIH-CGQ:2026-11-13:y_s_c_f";
+
+  // 用真实 epoch 值，保持 A 比 B 新（updatedAt 倒序时 A 在前）。
+  var latestTime = new Date(2026, 9, 27, 14, 30).getTime();
+
+  var store = { ctripRoutes: {} };
+
+  store.ctripRoutes[ROUTE_A_KEY] = {
+    key: ROUTE_A_KEY,
+    flightWay: "oneway",
+    originCode: "YIH",
+    originName: "宜昌",
+    destCode: "CGQ",
+    destName: "长春",
+    departDate: "2026-11-12",
+    cabin: "y_s_c_f",
+    currency: "CNY",
+    url: "https://flights.ctrip.com/online/list/oneway-yih-cgq?depdate=2026-11-12&cabin=y_s_c_f&adult=1&child=0&infant=0",
+    createdAt: new Date(2026, 9, 24, 9, 0).getTime(),
+    updatedAt: latestTime,
+    latest: {
+      t: latestTime,
+      minPrice: 520,
+      minFlightNo: "FM9366",
+      flights: [
+        {
+          no: "FM9366/FM9071",
+          airline: "上海航空",
+          departTime: "20:25",
+          arriveTime: "10:35+1",
+          transfers: 1,
+          price: 520
+        },
+        {
+          no: "MU2453",
+          airline: "东方航空",
+          departTime: "08:10",
+          arriveTime: "11:45",
+          transfers: 0,
+          price: 560
+        },
+        {
+          no: "CA1111",
+          airline: "中国国航",
+          departTime: "06:00",
+          arriveTime: "08:10",
+          transfers: 0,
+          price: 540
+        },
+        {
+          no: "CA2222",
+          airline: "中国国航",
+          departTime: "07:00",
+          arriveTime: "09:10",
+          transfers: 0,
+          price: 550
+        },
+        {
+          no: "MU3333",
+          airline: "东方航空",
+          departTime: "09:00",
+          arriveTime: "11:15",
+          transfers: 0,
+          price: 570
+        },
+        {
+          no: "CZ4444",
+          airline: "南方航空",
+          departTime: "10:00",
+          arriveTime: "12:20",
+          transfers: 0,
+          price: 580
+        },
+        {
+          no: "HU5555",
+          airline: "海南航空",
+          departTime: "11:00",
+          arriveTime: "13:10",
+          transfers: 0,
+          price: 590
+        },
+        {
+          no: "3U6666",
+          airline: "四川航空",
+          departTime: "12:00",
+          arriveTime: "14:20",
+          transfers: 0,
+          price: 600
+        },
+        {
+          no: "MF7777",
+          airline: "厦门航空",
+          departTime: "13:00",
+          arriveTime: "15:10",
+          transfers: 1,
+          price: 610
+        },
+        {
+          no: "SC8888",
+          airline: "山东航空",
+          departTime: "14:00",
+          arriveTime: "16:20",
+          transfers: 0,
+          price: 620
+        },
+        {
+          no: "ZH9999",
+          airline: "深圳航空",
+          departTime: "15:00",
+          arriveTime: "17:10",
+          transfers: 0,
+          price: 630
+        },
+        {
+          no: "GJ1010",
+          airline: "长龙航空",
+          departTime: "16:00",
+          arriveTime: "18:20",
+          transfers: 0,
+          price: 640
+        }
+      ]
+    },
+    history: [
+      {
+        t: new Date(2026, 9, 25, 9, 0).getTime(),
+        minPrice: 600,
+        minFlightNo: "MU2453"
+      },
+      {
+        t: new Date(2026, 9, 26, 9, 0).getTime(),
+        minPrice: 480,
+        minFlightNo: "MU2453"
+      },
+      { t: latestTime, minPrice: 520, minFlightNo: "FM9366" }
+    ]
+  };
+
+  store.ctripRoutes[ROUTE_B_KEY] = {
+    key: ROUTE_B_KEY,
+    flightWay: "oneway",
+    originCode: "YIH",
+    originName: "宜昌",
+    destCode: "CGQ",
+    destName: "长春",
+    departDate: "2026-11-13",
+    cabin: "y_s_c_f",
+    currency: "CNY",
+    url: "https://flights.ctrip.com/online/list/oneway-yih-cgq?depdate=2026-11-13&cabin=y_s_c_f&adult=1&child=0&infant=0",
+    createdAt: new Date(2026, 9, 26, 8, 0).getTime(),
+    updatedAt: new Date(2026, 9, 27, 10, 0).getTime(),
+    latest: {
+      t: new Date(2026, 9, 27, 10, 0).getTime(),
+      minPrice: 480,
+      minFlightNo: "CZ6342",
+      flights: [
+        {
+          no: "CZ6342",
+          airline: "南方航空",
+          departTime: "12:30",
+          arriveTime: "16:05",
+          transfers: 0,
+          price: 480
+        }
+      ]
+    },
+    history: [
+      {
+        t: new Date(2026, 9, 27, 10, 0).getTime(),
+        minPrice: 480,
+        minFlightNo: "CZ6342"
+      }
+    ]
+  };
+
+  window.__testStore = store;
+  window.__testRouteAKey = ROUTE_A_KEY;
+
+  // 在 popup.js 之前定义 mock chrome。
+  window.chrome = window.chrome || {};
+  var changeListeners = [];
+  window.chrome.storage = {
+    local: {
+      get: async function (key) {
+        var keys = Array.isArray(key) ? key : [key];
+        var result = {};
+        keys.forEach(function (name) {
+          result[name] = store[name];
+        });
+        return result;
+      },
+      set: async function (obj) {
+        Object.assign(store, obj);
+      }
+    },
+    onChanged: {
+      addListener: function (fn) {
+        changeListeners.push(fn);
+      }
+    }
+  };
+  window.__testEmitChange = function (changes) {
+    changeListeners.forEach(function (fn) {
+      fn(changes, "local");
+    });
+  };
+})();
+</script>
+
+<script src="src/shared/format.js"></script>
+<script src="src/shared/backup.js"></script>
+<script src="src/popup/chart.js"></script>
+<script src="src/popup/popup.js"></script>
+<script>
+(function () {
+  "use strict";
+
+  var result = document.getElementById("result");
+
+  function fail(message) {
+    result.setAttribute("data-result", "fail");
+    result.textContent = "FAIL: " + message;
+  }
+
+  function nextTick() {
+    return new Promise(function (resolve) {
+      setTimeout(resolve, 0);
+    });
+  }
+
+  function textOf(node) {
+    return node ? node.textContent.trim() : "";
+  }
+
+  async function runAssertions() {
+    var passed = 0;
+    var failures = [];
+
+    function check(name, condition) {
+      if (condition) {
+        passed += 1;
+      } else {
+        failures.push(name);
+      }
+    }
+
+    try {
+      // 1. 按 updatedAt 倒序渲染 2 张卡片。
+      var cards = document.querySelectorAll(".route-card");
+      check("卡片数量为 2", cards.length === 2);
+
+      var firstTitle = cards[0]
+        ? textOf(cards[0].querySelector(".route-title"))
+        : "";
+      var secondTitle = cards[1]
+        ? textOf(cards[1].querySelector(".route-title"))
+        : "";
+      check(
+        "第一张卡片标题包含「宜昌 → 长春」",
+        firstTitle.indexOf("宜昌 → 长春") !== -1
+      );
+      check(
+        "第一张卡片标题包含「11月12日」",
+        firstTitle.indexOf("11月12日") !== -1
+      );
+      check(
+        "第二张卡片标题包含「11月13日」",
+        secondTitle.indexOf("11月13日") !== -1
+      );
+
+      // 2. 舱位、现价、历史最低、较上次。
+      var firstCard = cards[0] || null;
+      check(
+        "第一张卡片舱位为「全部舱位」",
+        !!firstCard && textOf(firstCard.querySelector(".cabin-tag")) === "全部舱位"
+      );
+      check(
+        "第一张卡片当前价格为「¥520」",
+        !!firstCard &&
+          textOf(firstCard.querySelector(".current-price")) === "¥520"
+      );
+
+      var historyMin = firstCard
+        ? textOf(firstCard.querySelector(".history-min"))
+        : "";
+      check("历史最低文案包含「历史最低」", historyMin.indexOf("历史最低") !== -1);
+      check("历史最低文案包含「¥480」", historyMin.indexOf("¥480") !== -1);
+
+      var deltaText = firstCard
+        ? textOf(firstCard.querySelector(".delta"))
+        : "";
+      check("较上次文案包含「较上次」", deltaText.indexOf("较上次") !== -1);
+      check("较上次文案包含「+¥40」", deltaText.indexOf("+¥40") !== -1);
+
+      // 第二张卡片只有 1 个历史点，应显示「首次记录」。
+      var secondCard = cards[1] || null;
+      var secondDelta = secondCard
+        ? textOf(secondCard.querySelector(".delta"))
+        : "";
+      check("单点记录显示「首次记录」", secondDelta === "首次记录");
+
+      // 3. 每张卡片有 sparkline SVG。
+      for (var i = 0; i < cards.length; i += 1) {
+        check(
+          "第 " + (i + 1) + " 张卡片有 sparkline SVG",
+          !!cards[i].querySelector(".sparkline svg")
+        );
+      }
+
+      // 3b. 有记录时头部也提供携程入口。
+      var headerLink = document.querySelector(".popup-header .header-link");
+      check("有记录时头部存在携程入口", !!headerLink);
+      check(
+        "头部携程入口指向携程首页",
+        !!headerLink &&
+          headerLink.getAttribute("href") === "https://flights.ctrip.com/"
+      );
+      check(
+        "头部携程入口文案",
+        !!headerLink && textOf(headerLink) === "前往携程航班列表"
+      );
+
+      // 3c. 航线排序与自动采集开关。
+      var routeSelect = document.querySelector(".route-sort-select");
+      check("存在航线排序选择", !!routeSelect);
+      check("默认按最近更新排序", !!routeSelect && routeSelect.value === "updated");
+      if (routeSelect) {
+        routeSelect.value = "price";
+        routeSelect.dispatchEvent(new Event("change"));
+      }
+      await nextTick();
+      var priceOrderTitle = document.querySelector(".route-title");
+      check(
+        "按最低价排序时航线 B 在前",
+        !!priceOrderTitle && textOf(priceOrderTitle).indexOf("11月13日") !== -1
+      );
+      routeSelect = document.querySelector(".route-sort-select");
+      if (routeSelect) {
+        routeSelect.value = "updated";
+        routeSelect.dispatchEvent(new Event("change"));
+      }
+      await nextTick();
+
+      var settingCheckbox = document.querySelector(
+        '[data-setting="auto-collect"]'
+      );
+      check("存在自动采集开关", !!settingCheckbox);
+      check(
+        "自动采集默认开启",
+        !!settingCheckbox && settingCheckbox.checked === true
+      );
+      if (settingCheckbox) {
+        settingCheckbox.checked = false;
+        settingCheckbox.dispatchEvent(new Event("change"));
+        await nextTick();
+        check(
+          "关闭开关写入设置",
+          !!window.__testStore.ctripSettings &&
+            window.__testStore.ctripSettings.autoCollect === false
+        );
+        settingCheckbox.checked = true;
+        settingCheckbox.dispatchEvent(new Event("change"));
+        await nextTick();
+      }
+
+      var exportButton = document.querySelector('[data-action="export"]');
+      var importButton = document.querySelector('[data-action="import"]');
+      var importInput = document.querySelector('[data-action="import-file"]');
+      check("存在导出按钮", !!exportButton);
+      check("存在导入按钮", !!importButton);
+      check("存在导入文件输入", !!importInput);
+
+      // 4. 展开明细。
+      var expectedRouteAUrl =
+        window.__testStore.ctripRoutes[window.__testRouteAKey].url;
+      var expand = document.querySelector('[data-action="expand"]');
+      check("存在展开按钮", !!expand);
+      check("展开按钮初始文案为「展开详情」", !!expand && textOf(expand) === "展开详情");
+      if (expand) {
+        expand.click();
+        check("展开后按钮文案为「收起详情」", textOf(expand) === "收起详情");
+        var expandedCard = expand.closest(".route-card");
+        var details = expandedCard
+          ? expandedCard.querySelector(".details")
+          : null;
+        check("展开后明细可见", !!details && details.hidden === false);
+        check(
+          "明细不再显示多余的大趋势图",
+          !!details && !details.querySelector(".chart")
+        );
+        var detailsTitle = details
+          ? details.querySelector(".details-title")
+          : null;
+        check(
+          "明细标题为「航班明细」",
+          !!detailsTitle && textOf(detailsTitle) === "航班明细"
+        );
+        var rows = details
+          ? details.querySelectorAll(".flight-row")
+          : [];
+        check("航班明细展开后为 10 行", rows.length === 10);
+        var firstRow = rows.length ? rows[0] : null;
+        check(
+          "航班行显示航司名",
+          !!firstRow && textOf(firstRow).indexOf("上海航空") !== -1
+        );
+        check(
+          "中转信息合并在航班行",
+          !!firstRow && textOf(firstRow).indexOf("1次中转") !== -1
+        );
+        check(
+          "航班行显示总用时",
+          !!firstRow && textOf(firstRow).indexOf("14小时10分") !== -1
+        );
+        check(
+          "航班行显示起降时间",
+          !!firstRow && textOf(firstRow).indexOf("20:25 → 10:35+1") !== -1
+        );
+        var lowestBadge = details
+          ? details.querySelector(".flight-badge")
+          : null;
+        check("最低价航班有标记", !!lowestBadge);
+        check(
+          "最低价标记在 FM9366 行",
+          !!lowestBadge &&
+            textOf(lowestBadge.closest(".flight-row")).indexOf(
+              "FM9366/FM9071"
+            ) !== -1
+        );
+        var flightList = details ? details.querySelector(".flight-list") : null;
+        check(
+          "航班明细没有横向溢出",
+          !!flightList &&
+            flightList.scrollWidth <= flightList.clientWidth + 1
+        );
+
+        function firstCodes(count) {
+          var nodes = details ? details.querySelectorAll(".flight-code") : [];
+          return Array.prototype.slice
+            .call(nodes, 0, count)
+            .map(function (node) { return textOf(node); });
+        }
+
+        var sortButtons = details
+          ? details.querySelectorAll(".sort-button")
+          : [];
+        check(
+          "排序选项为价格/用时/起飞",
+          JSON.stringify(
+            Array.prototype.map.call(sortButtons, function (button) {
+              return textOf(button);
+            })
+          ) === JSON.stringify(["价格", "用时", "起飞"])
+        );
+        check(
+          "默认按价格排序",
+          !!details &&
+            details
+              .querySelector('.sort-button[data-sort="price"]')
+              .getAttribute("aria-pressed") === "true"
+        );
+        check("默认第一行为最低价航班", firstCodes(1)[0] === "FM9366/FM9071");
+
+        var directionButton = details.querySelector(
+          '[data-action="sort-direction"]'
+        );
+        check("存在排序方向按钮", !!directionButton);
+        check("默认升序", !!directionButton && textOf(directionButton) === "↑");
+        if (directionButton) {
+          directionButton.click();
+          await nextTick();
+          check("切换为降序", textOf(directionButton) === "↓");
+          check("降序时最贵航班在前", firstCodes(1)[0] === "GJ1010");
+          directionButton.click();
+          await nextTick();
+          check("切回升序", firstCodes(1)[0] === "FM9366/FM9071");
+        }
+
+        details
+          .querySelector('.sort-button[data-sort="duration"]')
+          .click();
+        await nextTick();
+        check(
+          "按用时排序：最短的三班在前",
+          JSON.stringify(firstCodes(3)) ===
+            JSON.stringify(["CA1111", "CA2222", "HU5555"])
+        );
+
+        details
+          .querySelector('.sort-button[data-sort="depart"]')
+          .click();
+        await nextTick();
+        check(
+          "按起飞排序：最早的三班在前",
+          JSON.stringify(firstCodes(3)) ===
+            JSON.stringify(["CA1111", "CA2222", "MU2453"])
+        );
+
+        details.querySelector('.sort-button[data-sort="price"]').click();
+        await nextTick();
+        check("切回价格排序", firstCodes(1)[0] === "FM9366/FM9071");
+
+        var showAll = details
+          ? details.querySelector('[data-action="show-all-flights"]')
+          : null;
+        check("存在显示全部按钮", !!showAll);
+        if (showAll) {
+          check("显示全部按钮文案", textOf(showAll).indexOf("显示全部") >= 0);
+          showAll.click();
+          await nextTick();
+          var allRows = details
+            ? details.querySelectorAll(".flight-row")
+            : [];
+          check("展开后显示全部 12 行", allRows.length === 12);
+          showAll.click();
+          await nextTick();
+          var collapsedRows = details
+            ? details.querySelectorAll(".flight-row")
+            : [];
+          check("再次点击收起为 10 行", collapsedRows.length === 10);
+        }
+        var ctripLink = details ? details.querySelector(".ctrip-link") : null;
+        check(
+          "航线链接指向航线 A",
+          !!ctripLink &&
+            ctripLink.getAttribute("href") === expectedRouteAUrl
+        );
+        check(
+          "航线链接文案为「打开本航线页面」",
+          !!ctripLink && textOf(ctripLink) === "打开本航线页面"
+        );
+
+        // 4b. 存储变化重渲染后保持展开与排序。
+        var durationButton = details.querySelector(
+          '.sort-button[data-sort="duration"]'
+        );
+        if (durationButton) {
+          durationButton.click();
+          await nextTick();
+          check(
+            "切换为用时排序",
+            durationButton.getAttribute("aria-pressed") === "true"
+          );
+
+          window.__testEmitChange({
+            ctripRoutes: { newValue: window.__testStore.ctripRoutes }
+          });
+          await nextTick();
+
+          var refreshedCard = document.querySelector(".route-card");
+          var refreshedDetails = refreshedCard
+            ? refreshedCard.querySelector(".details")
+            : null;
+          check(
+            "重渲染后详情仍展开",
+            !!refreshedDetails && refreshedDetails.hidden === false
+          );
+          var refreshedDuration = refreshedDetails
+            ? refreshedDetails.querySelector('.sort-button[data-sort="duration"]')
+            : null;
+          check(
+            "重渲染后保持用时排序",
+            !!refreshedDuration &&
+              refreshedDuration.getAttribute("aria-pressed") === "true"
+          );
+        }
+      }
+
+      // 5. 删除：两次点击确认。
+      var deleteButton = document.querySelector('[data-action="delete"]');
+      check("存在删除按钮", !!deleteButton);
+      if (deleteButton) {
+        deleteButton.click();
+        check(
+          "第一次点击删除后显示「确认删除」",
+          textOf(deleteButton) === "确认删除"
+        );
+        await nextTick();
+        deleteButton.click();
+        await nextTick();
+
+        var remainingCards = document.querySelectorAll(".route-card");
+        check("删除后只剩 1 张卡片", remainingCards.length === 1);
+
+        var store = window.__testStore;
+        var routeAKey = window.__testRouteAKey;
+        check(
+          "mock 存储中已删除航线 A",
+          !!store &&
+            !!store.ctripRoutes &&
+            !Object.prototype.hasOwnProperty.call(store.ctripRoutes, routeAKey)
+        );
+        check(
+          "删除时写入墓碑时间",
+          !!store &&
+            !!store.ctripDeleted &&
+            typeof store.ctripDeleted[routeAKey] === "number"
+        );
+      }
+
+      // 6. 清空全部数据：两次点击确认。
+      var clearButton = document.querySelector('[data-action="clear"]');
+      check("存在清空按钮", !!clearButton);
+      if (clearButton) {
+        clearButton.click();
+        check(
+          "第一次点击清空后显示「确认清空」",
+          textOf(clearButton) === "确认清空"
+        );
+        await nextTick();
+        clearButton.click();
+        await nextTick();
+
+        var emptyState = document.querySelector(".empty-state");
+        check("清空后显示空状态", !!emptyState);
+        check(
+          "清空后只保留头部携程入口",
+          document.querySelectorAll(".header-link").length === 1 &&
+            !document.querySelector(".empty-link")
+        );
+        check(
+          "清空时写入清空时间",
+          !!store && typeof store.ctripClearedAt === "number"
+        );
+        check(
+          "清空时重置墓碑",
+          !!store &&
+            !!store.ctripDeleted &&
+            Object.keys(store.ctripDeleted).length === 0
+        );
+        check(
+          "空状态文案正确",
+          textOf(emptyState) === "打开携程航班列表页后，这里会自动出现价格记录"
+        );
+        check(
+          "清空后没有卡片",
+          document.querySelectorAll(".route-card").length === 0
+        );
+
+        var storeAfterClear = window.__testStore;
+        check(
+          "mock 存储已清空",
+          !!storeAfterClear &&
+            !!storeAfterClear.ctripRoutes &&
+            Object.keys(storeAfterClear.ctripRoutes).length === 0
+        );
+      }
+    } catch (error) {
+      fail(error && error.message ? error.message : String(error));
+      return;
+    }
+
+    if (failures.length) {
+      result.setAttribute("data-result", "fail");
+      result.textContent =
+        "FAIL: " + failures.length + " 项失败\n" + failures.join("\n");
+    } else {
+      result.setAttribute("data-result", "pass");
+      result.textContent = "PASS: " + passed;
+    }
+  }
+
+  if (!window.__popupReady) {
+    fail("__popupReady 未定义");
+    return;
+  }
+
+  window.__popupReady
+    .then(runAssertions)
+    .catch(function (error) {
+      fail(error && error.message ? error.message : String(error));
+    });
+})();
+</script>
+</body>
+</html>

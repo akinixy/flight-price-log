@@ -1,0 +1,613 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>携程解析器测试</title>
+<style>
+  body {
+    margin: 24px;
+    font-family: system-ui, "Microsoft YaHei", sans-serif;
+    font-size: 14px;
+  }
+  #result { white-space: pre-wrap; }
+  #result[data-result="fail"] { color: #b42318; }
+</style>
+</head>
+<body>
+<h1>携程解析器测试</h1>
+<div id="result" data-result="fail">运行中…</div>
+
+<script src="test-fixtures.js"></script>
+<script src="src/content/parser.js"></script>
+<script src="src/shared/merge.js"></script>
+<script>
+(function () {
+  "use strict";
+
+  var passed = 0;
+  var failures = [];
+  var fatal = null;
+
+  function show(value) {
+    try {
+      return JSON.stringify(value);
+    } catch (error) {
+      return String(value);
+    }
+  }
+
+  function assertEqual(name, actual, expected) {
+    if (JSON.stringify(actual) === JSON.stringify(expected)) {
+      passed += 1;
+    } else {
+      failures.push(name + "：期望 " + show(expected) + "，实际 " + show(actual));
+    }
+  }
+
+  var result = document.getElementById("result");
+
+  function clone(value) {
+    return JSON.parse(JSON.stringify(value));
+  }
+
+  function buildFlightCard(options) {
+    var nextDay = options.nextDay
+      ? '<span class="day"> +' + options.nextDay + "天</span>"
+      : "";
+    var transfer = options.transfers
+      ? '<i class="arrow-transfer"><span>转' + options.transfers + "次</span></i>"
+      : "";
+    // departTime 传 null 时模拟时间尚未渲染出来的卡片。
+    var departBox = options.departTime
+      ? '<div class="depart-box"><div class="time">' + options.departTime + "</div></div>"
+      : '<div class="depart-box"></div>';
+    return (
+      '<div class="flight-item">' +
+        '<div class="flight-row">' +
+          '<div class="flight-airline">' +
+            '<div class="airline-item">' +
+              '<div class="airline-name">' + options.airline +
+                '<div class="plane"><span class="plane-No">' + options.no + "&nbsp;<span>波音738(中)</span></span></div>" +
+              "</div>" +
+            "</div>" +
+          "</div>" +
+          '<div class="flight-detail">' +
+            departBox +
+            '<div class="arrow-box">' + transfer + "</div>" +
+            '<div class="arrive-box"><div class="time">' + options.arriveTime + nextDay + "</div></div>" +
+          "</div>" +
+        "</div>" +
+        '<div class="flight-operate">' +
+          '<div class="flight-price"><div class="price">' + options.priceText + "</div></div>" +
+        "</div>" +
+      "</div>"
+    );
+  }
+
+  function buildDoc(cards) {
+    return new DOMParser().parseFromString(
+      '<!DOCTYPE html><html><body><div class="flight-list root-flights">' +
+        cards.join("") +
+        "</div></body></html>",
+      "text/html"
+    );
+  }
+
+  try {
+    const url = "https://flights.ctrip.com/online/list/oneway-yih-cgq?depdate=2026-11-12&cabin=y_s_c_f&adult=1&child=0&infant=0";
+    assertEqual("航线代码", CtripParser.parseUrl(url).originCode, "YIH");
+    assertEqual("日期", CtripParser.parseUrl(url).departDate, "2026-11-12");
+    assertEqual("舱位", CtripParser.parseUrl(url).cabin, "y_s_c_f");
+    assertEqual("规范链接", CtripParser.parseUrl(url).canonicalUrl,
+      "https://flights.ctrip.com/online/list/oneway-yih-cgq?depdate=2026-11-12&cabin=y_s_c_f&adult=1&child=0&infant=0");
+    assertEqual("非列表页", CtripParser.parseUrl("https://flights.ctrip.com/"), null);
+    assertEqual("缺省舱位", CtripParser.parseUrl("https://flights.ctrip.com/online/list/oneway-yih-cgq?depdate=2026-11-12").cabin, "unknown");
+    assertEqual("尾部斜杠链接",
+      CtripParser.parseUrl("https://flights.ctrip.com/online/list/oneway-yih-cgq/?depdate=2026-11-12&cabin=y_s_c_f").originCode,
+      "YIH");
+
+    var doc = new DOMParser().parseFromString(CTRIP_FIXTURES.domesticHtml, "text/html");
+
+    // 场景 1：真实脚本 + URL
+    var real = CtripParser.buildPageContext({
+      url: url,
+      scriptTexts: [CTRIP_FIXTURES.searchCriteriaScript],
+      doc: doc
+    });
+    assertEqual("真实脚本 ok", real.ok, true);
+    assertEqual("真实脚本出发名", real.context.originName, "宜昌");
+    assertEqual("真实脚本到达名", real.context.destName, "长春");
+    assertEqual("真实脚本币种", real.context.currency, "CNY");
+    assertEqual("真实脚本舱位", real.context.cabin, "y_s_c_f");
+
+    // 场景 2：陈旧脚本（日期与 URL 不一致，中文名回退 DOM）
+    var stale = CtripParser.buildPageContext({
+      url: url,
+      scriptTexts: [CTRIP_FIXTURES.staleScript],
+      doc: doc
+    });
+    assertEqual("陈旧脚本 ok", stale.ok, true);
+    assertEqual("陈旧脚本日期以 URL 为准", stale.context.departDate, "2026-11-12");
+    assertEqual("陈旧脚本出发名取 DOM", stale.context.originName, "宜昌");
+    assertEqual("陈旧脚本到达名取 DOM", stale.context.destName, "长春");
+
+    // 场景 3：国际页
+    var international = CtripParser.buildPageContext({
+      url: url,
+      scriptTexts: [CTRIP_FIXTURES.internationalScript],
+      doc: doc
+    });
+    assertEqual("国际页 ok", international.ok, false);
+    assertEqual("国际页原因", international.reason, "not-domestic");
+
+    // 场景 4：往返脚本
+    var criteriaStart = CTRIP_FIXTURES.searchCriteriaScript.indexOf("{");
+    var criteriaEnd = CTRIP_FIXTURES.searchCriteriaScript.indexOf("};", criteriaStart);
+    var criteria = JSON.parse(CTRIP_FIXTURES.searchCriteriaScript.slice(criteriaStart, criteriaEnd + 1));
+    criteria.flightWay = "R";
+    var roundTripScript = "window['GlobalSearchCriteria'] = " + JSON.stringify(criteria) + ";";
+    var roundTrip = CtripParser.buildPageContext({
+      url: url,
+      scriptTexts: [roundTripScript],
+      doc: doc
+    });
+    assertEqual("往返脚本 ok", roundTrip.ok, false);
+    assertEqual("往返脚本原因", roundTrip.reason, "not-oneway");
+
+    // 场景 5：无脚本，中文名回退 DOM，再兜底城市代码
+    var noScript = CtripParser.buildPageContext({ url: url, scriptTexts: [], doc: doc });
+    assertEqual("无脚本 ok", noScript.ok, true);
+    assertEqual("无脚本出发名取 DOM", noScript.context.originName, "宜昌");
+    assertEqual("无脚本到达名取 DOM", noScript.context.destName, "长春");
+    var emptyDoc = new DOMParser().parseFromString("<html><body></body></html>", "text/html");
+    var noNames = CtripParser.buildPageContext({ url: url, scriptTexts: [], doc: emptyDoc });
+    assertEqual("无脚本出发名回退代码", noNames.context.originName, "YIH");
+    assertEqual("无脚本到达名回退代码", noNames.context.destName, "CGQ");
+
+    // 场景 6：非 oneway URL
+    var unsupportedUrl = CtripParser.buildPageContext({
+      url: "https://flights.ctrip.com/online/list/round-yih-cgq?depdate=2026-11-12&cabin=y_s_c_f",
+      scriptTexts: [CTRIP_FIXTURES.searchCriteriaScript],
+      doc: doc
+    });
+    assertEqual("非单程链接 ok", unsupportedUrl.ok, false);
+    assertEqual("非单程链接原因", unsupportedUrl.reason, "unsupported-url");
+
+    // 场景 7：真实页航班解析
+    var flights = CtripParser.parseFlights(doc);
+    assertEqual("航班数量", flights.length, 2);
+    var fm9071 = null;
+    for (var i = 0; i < flights.length; i += 1) {
+      if (flights[i].no === "FM9366/FM9071") fm9071 = flights[i];
+    }
+    assertEqual("第一张卡航班号", fm9071 && fm9071.no, "FM9366/FM9071");
+    assertEqual("第一张卡航司", fm9071 && fm9071.airline, "上海航空");
+    assertEqual("第一张卡起飞", fm9071 && fm9071.departTime, "20:25");
+    assertEqual("第一张卡到达", fm9071 && fm9071.arriveTime, "10:35+1");
+    assertEqual("第一张卡中转", fm9071 && fm9071.transfers, 1);
+    assertEqual("第一张卡价格", fm9071 && fm9071.price, 520);
+
+    // 场景 8：合成直飞卡（逗号价格、无跨天、无中转）
+    var directDoc = buildDoc([
+      buildFlightCard({
+        priceText: "¥1,520 起",
+        no: "CA1234",
+        airline: "中国国航",
+        departTime: "08:00",
+        arriveTime: "10:30",
+      }),
+    ]);
+    var directFlights = CtripParser.parseFlights(directDoc);
+    assertEqual("直飞卡数量", directFlights.length, 1);
+    assertEqual("逗号价格", directFlights[0].price, 1520);
+    assertEqual("直飞航班号", directFlights[0].no, "CA1234");
+    assertEqual("直飞无中转", directFlights[0].transfers, 0);
+    assertEqual("直飞到达时间", directFlights[0].arriveTime, "10:30");
+
+    // 场景 8b：价格只取第一个数字串，不拼接返现等其他数字
+    var rebateDoc = buildDoc([
+      buildFlightCard({
+        priceText: "¥520 返50",
+        no: "CA1357",
+        airline: "中国国航",
+        departTime: "08:30",
+        arriveTime: "10:45",
+      }),
+    ]);
+    var rebateFlights = CtripParser.parseFlights(rebateDoc);
+    assertEqual("返现价格不拼接", rebateFlights[0].price, 520);
+
+    // 场景 9：无效价格被跳过
+    var invalidPriceDoc = buildDoc([
+      buildFlightCard({
+        priceText: "¥--",
+        no: "CA4321",
+        airline: "中国国航",
+        departTime: "09:00",
+        arriveTime: "11:00",
+      }),
+      buildFlightCard({
+        priceText: "¥800 起",
+        no: "CA8765",
+        airline: "中国国航",
+        departTime: "12:00",
+        arriveTime: "14:00",
+      }),
+    ]);
+    var validOnly = CtripParser.parseFlights(invalidPriceDoc);
+    assertEqual("无效价格被跳过", validOnly.length, 1);
+    assertEqual("保留有效航班", validOnly[0].no, "CA8765");
+
+    // 场景 9b：非法 24 小时制时间被跳过，不能把 24:30 匹配成 4:30
+    var invalidTimeDoc = buildDoc([
+      buildFlightCard({
+        priceText: "¥800 起",
+        no: "CA9998",
+        airline: "中国国航",
+        departTime: "24:30",
+        arriveTime: "26:30",
+      }),
+      buildFlightCard({
+        priceText: "¥810 起",
+        no: "CA9997",
+        airline: "中国国航",
+        departTime: "08:00",
+        arriveTime: "10:00",
+      }),
+    ]);
+    var validTimeFlights = CtripParser.parseFlights(invalidTimeDoc);
+    assertEqual("非法时间卡被跳过", validTimeFlights.length, 1);
+    assertEqual("保留合法时间卡", validTimeFlights[0].no, "CA9997");
+
+    // 场景 10：重复卡去重
+    var duplicateCard = buildFlightCard({
+      priceText: "¥900 起",
+      no: "CA5678",
+      airline: "中国国航",
+      departTime: "13:00",
+      arriveTime: "15:00",
+    });
+    var duplicateFlights = CtripParser.parseFlights(
+      buildDoc([duplicateCard, duplicateCard])
+    );
+    assertEqual("重复卡去重", duplicateFlights.length, 1);
+
+    // 场景 11：最多保留 200 条，且为最便宜的 200 条
+    var manyCards = [];
+    for (var m = 0; m < 205; m += 1) {
+      manyCards.push(
+        buildFlightCard({
+          priceText: "¥" + (100 + m) + " 起",
+          no: "CA" + (1000 + m),
+          airline: "中国国航",
+          departTime: "08:00",
+          arriveTime: "10:00",
+        })
+      );
+    }
+    var capped = CtripParser.parseFlights(buildDoc(manyCards));
+    assertEqual("航班上限条数", capped.length, 200);
+    assertEqual("上限保留最低价", capped[0].price, 100);
+    assertEqual("上限第 200 条", capped[199].price, 299);
+
+    // 场景 11b：通程航班（.plane-No 文本带航司前缀）
+    var throughCard =
+      '<div class="flight-item domestic">' +
+        '<div class="flight-row">' +
+          '<div class="flight-airline">' +
+            '<div class="airline-name"><span class="mul-airline">通程航班 </span></div>' +
+            '<div class="plane">' +
+              '<span class="plane-No enable-hover">南航 CZ3312</span>' +
+              '<span class="plane-No enable-hover">南航 CZ3606</span>' +
+            "</div>" +
+          "</div>" +
+          '<div class="flight-detail">' +
+            '<div class="depart-box"><div class="time">07:00</div></div>' +
+            '<div class="arrow-box"><div class="stop-text"><span class="high-light">通程</span>广州</div></div>' +
+            '<div class="arrive-box"><div class="time">20:20<span class="day"> </span></div></div>' +
+          "</div>" +
+        "</div>" +
+        '<div class="flight-price"><div class="price">¥850起</div></div>' +
+      "</div>";
+
+    // 场景 11c：多航司中转（没有 .plane-No，航班号只在 id 里）
+    var idsOnlyCard =
+      '<div class="flight-item domestic">' +
+        '<div class="flight-row">' +
+          '<div class="flight-airline" id="comfort-HO2096_1794451500000FM9079_1794488400000-1600">' +
+            '<div class="airline-item"><div class="airline-name">吉祥航空</div></div>' +
+            '<div class="airline-item"><div class="airline-name">上海航空</div></div>' +
+          "</div>" +
+          '<div class="flight-detail">' +
+            '<div class="depart-box"><div class="time">10:45</div></div>' +
+            '<div class="arrow-box"><span class="transfer-duration">中转8小时15分</span><i class="arrow-transfer"><span>转1次</span></i></div>' +
+            '<div class="arrive-box"><div class="time">23:55<span class="day"> </span></div></div>' +
+          "</div>" +
+        "</div>" +
+        '<div class="flight-price"><div class="price">¥928起</div></div>' +
+      "</div>";
+
+    var specialFlights = CtripParser.parseFlights(
+      buildDoc([throughCard, idsOnlyCard])
+    );
+    assertEqual("特殊卡数量", specialFlights.length, 2);
+    var throughFlight = null;
+    var idsOnlyFlight = null;
+    for (var si = 0; si < specialFlights.length; si += 1) {
+      if (specialFlights[si].no.indexOf("CZ3312") >= 0) throughFlight = specialFlights[si];
+      if (specialFlights[si].no.indexOf("HO2096") >= 0) idsOnlyFlight = specialFlights[si];
+    }
+    assertEqual(
+      "通程航班号",
+      throughFlight && throughFlight.no,
+      "CZ3312/CZ3606"
+    );
+    assertEqual("通程价格", throughFlight && throughFlight.price, 850);
+    assertEqual("通程中转", throughFlight && throughFlight.transfers, 1);
+    assertEqual("ID 航班号", idsOnlyFlight && idsOnlyFlight.no, "HO2096/FM9079");
+    assertEqual(
+      "ID 航司",
+      idsOnlyFlight && idsOnlyFlight.airline,
+      "吉祥航空/上海航空"
+    );
+    assertEqual("ID 中转", idsOnlyFlight && idsOnlyFlight.transfers, 1);
+
+    var specialSnapshot = CtripParser.extractSnapshot({
+      doc: buildDoc([throughCard, idsOnlyCard]),
+      url: url,
+      scriptTexts: [CTRIP_FIXTURES.searchCriteriaScript],
+    });
+    assertEqual("特殊卡快照 ok", specialSnapshot.ok, true);
+    assertEqual(
+      "特殊卡快照通过合并校验",
+      CtripStore.validateSnapshot(specialSnapshot.snapshot).ok,
+      true
+    );
+
+    // 场景 12：快照提取
+    var snapshotResult = CtripParser.extractSnapshot({
+      doc: doc,
+      url: url,
+      scriptTexts: [CTRIP_FIXTURES.searchCriteriaScript],
+    });
+    assertEqual("快照 ok", snapshotResult.ok, true);
+    var snapshot = snapshotResult.snapshot;
+    assertEqual("快照最低价", snapshot.minPrice, 520);
+    assertEqual("快照最低航班号", snapshot.minFlightNo, "FM9366");
+    assertEqual("快照时间戳", Number.isInteger(snapshot.t) && snapshot.t > 0, true);
+    assertEqual("快照保留上下文", snapshot.originName, "宜昌");
+    assertEqual("快照通过合并校验", CtripStore.validateSnapshot(snapshot).ok, true);
+
+    // 场景 12b：缺少起飞时间的卡片被跳过，最低价只按幸存航班计算，快照仍通过合并校验
+    var missingTimeDoc = buildDoc([
+      buildFlightCard({
+        priceText: "¥700 起",
+        no: "CA1111",
+        airline: "中国国航",
+        departTime: null,
+        arriveTime: "12:00",
+      }),
+      buildFlightCard({
+        priceText: "¥800 起",
+        no: "CA2222",
+        airline: "中国国航",
+        departTime: "13:00",
+        arriveTime: "15:00",
+      }),
+    ]);
+    var missingTimeFlights = CtripParser.parseFlights(missingTimeDoc);
+    assertEqual("缺起飞时间卡片被跳过", missingTimeFlights.length, 1);
+    assertEqual("缺起飞时间保留有效航班", missingTimeFlights[0].no, "CA2222");
+    var missingTimeSnapshot = CtripParser.extractSnapshot({
+      doc: missingTimeDoc,
+      url: url,
+      scriptTexts: [CTRIP_FIXTURES.searchCriteriaScript],
+    });
+    assertEqual("缺起飞时间快照 ok", missingTimeSnapshot.ok, true);
+    assertEqual(
+      "缺起飞时间快照最低价按幸存航班",
+      missingTimeSnapshot.snapshot.minPrice,
+      800
+    );
+    assertEqual(
+      "缺起飞时间快照通过合并校验",
+      CtripStore.validateSnapshot(missingTimeSnapshot.snapshot).ok,
+      true
+    );
+
+    // 场景 12c：含非法字符的舱位归一化为 unknown，快照仍通过合并校验
+    var badCabinUrl =
+      "https://flights.ctrip.com/online/list/oneway-yih-cgq?depdate=2026-11-12&cabin=Y%2FS&adult=1&child=0&infant=0";
+    assertEqual("非法舱位归一化", CtripParser.parseUrl(badCabinUrl).cabin, "unknown");
+    var badCabinSnapshot = CtripParser.extractSnapshot({
+      doc: doc,
+      url: badCabinUrl,
+      scriptTexts: [CTRIP_FIXTURES.searchCriteriaScript],
+    });
+    assertEqual(
+      "非法舱位快照通过合并校验",
+      CtripStore.validateSnapshot(badCabinSnapshot.snapshot).ok,
+      true
+    );
+
+    var noFlights = CtripParser.extractSnapshot({
+      doc: emptyDoc,
+      url: url,
+      scriptTexts: [CTRIP_FIXTURES.searchCriteriaScript],
+    });
+    assertEqual("无航班 ok", noFlights.ok, false);
+    assertEqual("无航班原因", noFlights.reason, "no-flights");
+
+    // 场景 13：快照相同判定
+    var sameSnapshot = CtripParser.extractSnapshot({
+      doc: doc,
+      url: url,
+      scriptTexts: [CTRIP_FIXTURES.searchCriteriaScript],
+    });
+    assertEqual(
+      "快照相同",
+      CtripParser.isSameSnapshot(snapshot, sameSnapshot.snapshot),
+      true
+    );
+    var lowerSnapshot = clone(snapshot);
+    lowerSnapshot.minPrice = 500;
+    assertEqual(
+      "快照最低价变化",
+      CtripParser.isSameSnapshot(snapshot, lowerSnapshot),
+      false
+    );
+
+    // 场景 14：是否应提醒
+    assertEqual("首次提醒", CtripParser.shouldUpdate(null, snapshot), true);
+    var decreased = clone(snapshot);
+    decreased.minPrice = 480;
+    assertEqual(
+      "价格下降提醒",
+      CtripParser.shouldUpdate(snapshot, decreased),
+      true
+    );
+    var moreFlights = clone(snapshot);
+    moreFlights.flights.push({
+      no: "CA9999",
+      airline: "中国国航",
+      departTime: "09:00",
+      arriveTime: "11:00",
+      transfers: 0,
+      price: 700,
+    });
+    assertEqual(
+      "航班增加提醒",
+      CtripParser.shouldUpdate(snapshot, moreFlights),
+      true
+    );
+    var increased = clone(snapshot);
+    increased.minPrice = 600;
+    assertEqual(
+      "价格上升不提醒",
+      CtripParser.shouldUpdate(snapshot, increased),
+      false
+    );
+
+    // 场景 16：滚动分批渲染时累积合并，不用新快照覆盖已见航班
+    var firstBatch = clone(snapshot);
+    firstBatch.flights = [
+      { no: "CA1001", airline: "中国国航", departTime: "08:00", arriveTime: "10:00", transfers: 0, price: 600 },
+      { no: "CA1002", airline: "中国国航", departTime: "09:00", arriveTime: "11:00", transfers: 0, price: 650 },
+    ];
+    firstBatch.minPrice = 600;
+    firstBatch.minFlightNo = "CA1001";
+    var secondBatch = clone(firstBatch);
+    secondBatch.flights = [
+      { no: "CA1003", airline: "中国国航", departTime: "10:00", arriveTime: "12:00", transfers: 0, price: 550 },
+    ];
+    secondBatch.minPrice = 550;
+    secondBatch.minFlightNo = "CA1003";
+    var accumulated = CtripParser.mergeSnapshots(firstBatch, secondBatch);
+    assertEqual("累积合并航班数", accumulated.flights.length, 3);
+    assertEqual("累积合并最低价", accumulated.minPrice, 550);
+    assertEqual("累积合并最低航班", accumulated.minFlightNo, "CA1003");
+    assertEqual(
+      "累积合并保留旧航班",
+      accumulated.flights.some(function (f) { return f.no === "CA1001"; }),
+      true
+    );
+
+    var sameAgain = CtripParser.mergeSnapshots(accumulated, clone(accumulated));
+    assertEqual("重复合并不增加", sameAgain.flights.length, 3);
+    assertEqual("无基础快照返回新快照", CtripParser.mergeSnapshots(null, secondBatch), secondBatch);
+
+    // 场景 16a：同一航班价格刷新时保留最新值，不重复计入
+    var repriced = clone(firstBatch);
+    repriced.flights = [
+      { no: "CA1001", airline: "中国国航", departTime: "08:00", arriveTime: "10:00", transfers: 0, price: 480 },
+    ];
+    repriced.minPrice = 480;
+    repriced.minFlightNo = "CA1001";
+    var repricedMerge = CtripParser.mergeSnapshots(firstBatch, repriced);
+    assertEqual("价格刷新不增加航班", repricedMerge.flights.length, 2);
+    assertEqual("价格刷新取最新价", repricedMerge.minPrice, 480);
+
+    // 场景 16b：合并后仍受 200 条上限约束
+    var manyBase = clone(snapshot);
+    manyBase.flights = [];
+    manyBase.minPrice = 100;
+    manyBase.minFlightNo = "CA0001";
+    for (var n = 0; n < 60; n += 1) {
+      manyBase.flights.push({
+        no: "CA" + (1000 + n),
+        airline: "中国国航",
+        departTime: "08:00",
+        arriveTime: "10:00",
+        transfers: 0,
+        price: 100 + n,
+      });
+    }
+    var moreCards = clone(secondBatch);
+    moreCards.flights = [];
+    moreCards.minPrice = 50;
+    moreCards.minFlightNo = "CA9001";
+    for (var p = 0; p < 5; p += 1) {
+      moreCards.flights.push({
+        no: "CA" + (9000 + p),
+        airline: "中国国航",
+        departTime: "07:00",
+        arriveTime: "09:00",
+        transfers: 0,
+        price: 50 + p,
+      });
+    }
+    var cappedMerge = CtripParser.mergeSnapshots(manyBase, moreCards);
+    assertEqual("累积合并保留 65 条", cappedMerge.flights.length, 65);
+    assertEqual("累积合并保留更便宜的新航班", cappedMerge.flights[0].no, "CA9000");
+
+    // 场景 17：按最后看到轮次清理过期航班
+    var seen = {};
+    seen["CA1001|08:00"] = 2;
+    seen["CA1002|09:00"] = 1;
+    var pruneSource = [
+      { no: "CA1001", departTime: "08:00", price: 600 },
+      { no: "CA1002", departTime: "09:00", price: 650 },
+    ];
+    assertEqual(
+      "只保留最新轮次出现的航班",
+      CtripParser.pruneFlights(pruneSource, seen, 2).map(function (f) { return f.no; }),
+      ["CA1001"]
+    );
+    assertEqual(
+      "旧轮次航班被清理",
+      CtripParser.pruneFlights(pruneSource, seen, 1).map(function (f) { return f.no; }),
+      ["CA1002"]
+    );
+    assertEqual("空 seen 全部清理", CtripParser.pruneFlights(pruneSource, {}, 2).length, 0);
+
+    // 场景 18：重建快照会重算最低价并排序
+    var rebuiltSnapshot = CtripParser.rebuildSnapshot(snapshot, [
+      { no: "CA2000", airline: "中国国航", departTime: "10:00", arriveTime: "12:00", transfers: 0, price: 700 },
+      { no: "CA2001", airline: "中国国航", departTime: "08:00", arriveTime: "10:00", transfers: 0, price: 450 },
+    ]);
+    assertEqual("重建快照航班数", rebuiltSnapshot.flights.length, 2);
+    assertEqual("重建快照最低价", rebuiltSnapshot.minPrice, 450);
+    assertEqual("重建快照最低航班", rebuiltSnapshot.minFlightNo, "CA2001");
+    assertEqual("重建空快照返回 null", CtripParser.rebuildSnapshot(snapshot, []), null);
+  } catch (error) {
+    fatal = error && error.message ? error.message : String(error);
+  }
+
+  if (fatal) {
+    result.setAttribute("data-result", "fail");
+    result.textContent =
+      "FAIL: " + fatal +
+      (failures.length ? "\n" + failures.join("\n") : "") +
+      "\n通过 " + passed + " 项";
+  } else if (failures.length) {
+    result.setAttribute("data-result", "fail");
+    result.textContent =
+      "FAIL: " + failures.length + " 项失败\n" + failures.join("\n");
+  } else {
+    result.setAttribute("data-result", "pass");
+    result.textContent = "PASS: " + passed;
+  }
+})();
+</script>
+</body>
+</html>

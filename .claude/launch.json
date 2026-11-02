@@ -1,0 +1,12 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "tests",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["tools/serve-tests.js"],
+      "port": 8420,
+      "url": "http://localhost:8420"
+    }
+  ]
+}
