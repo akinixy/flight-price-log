@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>弹窗预览</title>
+<link rel="stylesheet" href="../src/popup/popup.css">
+<style>
+  html, body { width: 380px; height: 600px; overflow: hidden; }
+  #app { scrollbar-width: none; }
+  #app::-webkit-scrollbar { display: none; }
+</style>
+</head>
+<body>
+<div id="app"></div>
+
+<script>
+(function () {
+  "use strict";
+
+  var ROUTE_A_KEY = "oneway:SHA-PEK:2026-11-18:y_s_c_f";
+  var ROUTE_B_KEY = "oneway:SHA-PEK:2026-11-19:y_s_c_f";
+  var latestTime = new Date(2026, 10, 2, 9, 40).getTime();
+  var store = { ctripRoutes: {} };
+
+  store.ctripRoutes[ROUTE_A_KEY] = {
+    key: ROUTE_A_KEY,
+    flightWay: "oneway",
+    originCode: "SHA",
+    originName: "上海",
+    destCode: "PEK",
+    destName: "北京",
+    departDate: "2026-11-18",
+    cabin: "y_s_c_f",
+    currency: "CNY",
+    url: "https://flights.ctrip.com/online/list/oneway-sha-pek?depdate=2026-11-18&cabin=y_s_c_f&adult=1&child=0&infant=0",
+    createdAt: new Date(2026, 9, 28, 9, 0).getTime(),
+    updatedAt: latestTime,
+    latest: {
+      t: latestTime,
+      minPrice: 680,
+      minFlightNo: "MU5101",
+      flights: [
+        { no: "MU5101", airline: "东方航空", departTime: "07:00", arriveTime: "09:15", transfers: 0, price: 680 },
+        { no: "CA1832", airline: "中国国航", departTime: "08:00", arriveTime: "10:20", transfers: 0, price: 720 },
+        { no: "HU7602", airline: "海南航空", departTime: "09:10", arriveTime: "11:30", transfers: 0, price: 760 },
+        { no: "HO1251", airline: "吉祥航空", departTime: "10:20", arriveTime: "12:35", transfers: 0, price: 800 },
+        { no: "FM9101", airline: "上海航空", departTime: "11:30", arriveTime: "13:45", transfers: 0, price: 840 },
+        { no: "CZ3901", airline: "南方航空", departTime: "12:40", arriveTime: "15:00", transfers: 0, price: 880 },
+        { no: "9C8891", airline: "春秋航空", departTime: "13:50", arriveTime: "16:05", transfers: 0, price: 920 },
+        { no: "CA1518", airline: "中国国航", departTime: "15:00", arriveTime: "17:15", transfers: 0, price: 960 },
+        { no: "MU5129", airline: "东方航空", departTime: "16:10", arriveTime: "18:25", transfers: 0, price: 1020 },
+        { no: "HU7618", airline: "海南航空", departTime: "17:20", arriveTime: "19:35", transfers: 0, price: 1080 }
+      ]
+    },
+    history: [
+      { t: new Date(2026, 9, 28, 9, 0).getTime(), minPrice: 620, minFlightNo: "MU5101" },
+      { t: new Date(2026, 9, 30, 9, 0).getTime(), minPrice: 820, minFlightNo: "MU5101" },
+      { t: new Date(2026, 9, 31, 9, 0).getTime(), minPrice: 760, minFlightNo: "MU5101" },
+      { t: latestTime, minPrice: 680, minFlightNo: "MU5101" }
+    ]
+  };
+
+  store.ctripRoutes[ROUTE_B_KEY] = {
+    key: ROUTE_B_KEY,
+    flightWay: "oneway",
+    originCode: "SHA",
+    originName: "上海",
+    destCode: "PEK",
+    destName: "北京",
+    departDate: "2026-11-19",
+    cabin: "y_s_c_f",
+    currency: "CNY",
+    url: "https://flights.ctrip.com/online/list/oneway-sha-pek?depdate=2026-11-19&cabin=y_s_c_f&adult=1&child=0&infant=0",
+    createdAt: new Date(2026, 9, 29, 8, 0).getTime(),
+    updatedAt: new Date(2026, 10, 2, 9, 10).getTime(),
+    latest: {
+      t: new Date(2026, 10, 2, 9, 10).getTime(),
+      minPrice: 640,
+      minFlightNo: "CZ3901",
+      flights: [
+        { no: "CZ3901", airline: "南方航空", departTime: "12:40", arriveTime: "15:00", transfers: 0, price: 640 }
+      ]
+    },
+    history: [
+      { t: new Date(2026, 10, 2, 9, 10).getTime(), minPrice: 640, minFlightNo: "CZ3901" }
+    ]
+  };
+
+  // 只有预览页需要的最小 chrome.storage mock。
+  window.chrome = window.chrome || {};
+  window.chrome.storage = {
+    local: {
+      get: async function (key) {
+        var keys = Array.isArray(key) ? key : [key];
+        var result = {};
+        keys.forEach(function (name) {
+          result[name] = store[name];
+        });
+        return result;
+      },
+      set: async function (obj) {
+        Object.assign(store, obj);
+      }
+    },
+    onChanged: {
+      addListener: function () {}
+    }
+  };
+})();
+</script>
+
+<script src="../src/shared/format.js"></script>
+<script src="../src/shared/backup.js"></script>
+<script src="../src/popup/chart.js"></script>
+<script src="../src/popup/popup.js"></script>
+<script>
+(function () {
+  "use strict";
+  var attempts = 0;
+
+  function expandFirstRoute() {
+    var button = document.querySelector(".route-card .button-expand");
+    if (button) {
+      if (button.getAttribute("aria-expanded") === "false") {
+        button.click();
+      }
+      var app = document.getElementById("app");
+      if (app) app.scrollTop = 0;
+      return;
+    }
+    attempts += 1;
+    if (attempts < 40) setTimeout(expandFirstRoute, 50);
+  }
+
+  setTimeout(expandFirstRoute, 50);
+})();
+</script>
+</body>
+</html>

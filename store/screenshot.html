@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>航班价格记录簿 · 商店截图</title>
+<style>
+  :root {
+    --ink: #101e2b;
+    --paper: #f4efe4;
+    --muted: #b6afa2;
+    --accent: #c97b3c;
+    --line: rgba(222, 213, 198, 0.16);
+  }
+
+  * { box-sizing: border-box; }
+
+  html, body {
+    width: 1280px;
+    height: 800px;
+    margin: 0;
+    overflow: hidden;
+  }
+
+  body {
+    background:
+      radial-gradient(circle at 84% 28%, rgba(201, 123, 60, 0.16), transparent 42%),
+      radial-gradient(circle at 6% 94%, rgba(244, 239, 228, 0.06), transparent 34%),
+      var(--ink);
+    color: var(--paper);
+    font-family: "Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC", sans-serif;
+  }
+
+  .stage {
+    position: relative;
+    width: 1280px;
+    height: 800px;
+    padding: 84px 84px 62px 88px;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 380px;
+    gap: 70px;
+    align-items: center;
+    transform-origin: top left;
+  }
+
+  .route-map {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+    opacity: 0.6;
+  }
+
+  .copy {
+    position: relative;
+    z-index: 1;
+    max-width: 560px;
+  }
+
+  h1 {
+    margin: 0;
+    font-family: "Songti SC", "STSong", "SimSun", "Noto Serif SC", Georgia, serif;
+    font-size: 66px;
+    line-height: 1.1;
+    font-weight: 700;
+    letter-spacing: -0.035em;
+  }
+
+  .lede {
+    max-width: 540px;
+    margin: 28px 0 0;
+    color: var(--muted);
+    font-size: 19px;
+    line-height: 1.75;
+    letter-spacing: 0.01em;
+  }
+
+  .facts {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 24px;
+    margin-top: 46px;
+    padding-top: 22px;
+    border-top: 1px solid var(--line);
+  }
+
+  .facts b {
+    display: block;
+    color: var(--paper);
+    font-size: 15px;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+  }
+
+  .facts span {
+    display: block;
+    margin-top: 7px;
+    color: var(--muted);
+    font-size: 12.5px;
+    line-height: 1.55;
+  }
+
+  .note {
+    margin: 42px 0 0;
+    color: rgba(182, 175, 162, 0.72);
+    font-size: 13px;
+    letter-spacing: 0.02em;
+  }
+
+  .device {
+    position: relative;
+    z-index: 1;
+    width: 380px;
+    height: 600px;
+    border: 1px solid rgba(244, 239, 228, 0.18);
+    border-radius: 18px;
+    overflow: hidden;
+    background: #f4efe4;
+    box-shadow:
+      0 36px 80px rgba(0, 0, 0, 0.46),
+      0 8px 24px rgba(0, 0, 0, 0.28);
+  }
+
+  .device::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    height: 58px;
+    z-index: 2;
+    pointer-events: none;
+    background: linear-gradient(to bottom, rgba(244, 239, 228, 0), #f4efe4 74%);
+  }
+
+  .device::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    pointer-events: none;
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08);
+  }
+
+  .device img {
+    display: block;
+    width: 380px;
+    height: 600px;
+    object-fit: cover;
+  }
+</style>
+</head>
+<body>
+  <div class="stage">
+    <svg class="route-map" viewBox="0 0 1280 800" aria-hidden="true">
+      <path d="M 54 716 C 330 636, 650 338, 1226 92"
+            fill="none" stroke="#c97b3c" stroke-width="1.5"
+            stroke-linecap="round" stroke-dasharray="2 11" opacity="0.22"/>
+      <circle cx="54" cy="716" r="4" fill="#c97b3c" opacity="0.45"/>
+      <circle cx="1226" cy="92" r="4" fill="#c97b3c" opacity="0.45"/>
+      <text x="68" y="744" fill="#c97b3c" opacity="0.55"
+            font-family="Consolas, monospace" font-size="13" letter-spacing="3">SHA</text>
+      <text x="1156" y="72" fill="#c97b3c" opacity="0.55"
+            font-family="Consolas, monospace" font-size="13" letter-spacing="3">PEK</text>
+    </svg>
+
+    <div class="copy">
+      <h1>把航班价格<br>记成一条线</h1>
+      <p class="lede">打开携程国内航班列表，自动记录当前价、历史最低与价差。<br>数据只保存在本机。</p>
+
+      <div class="facts">
+        <div>
+          <b>自动采集</b>
+          <span>滚动加载的航班也会继续记录</span>
+        </div>
+        <div>
+          <b>历史最低</b>
+          <span>价差与趋势一眼看清</span>
+        </div>
+        <div>
+          <b>只存本机</b>
+          <span>没有账号，也不发网络请求</span>
+        </div>
+      </div>
+
+      <p class="note">非官方扩展，与携程无关联</p>
+    </div>
+
+    <div class="device">
+      <img src="popup-shot.png" width="380" height="600" alt="上海到北京航班价格记录弹窗">
+    </div>
+  </div>
+  <script>
+    (function () {
+      "use strict";
+      var stage = document.querySelector(".stage");
+
+      function fitPreview() {
+        var scale = Math.min(1, window.innerWidth / 1280);
+        stage.style.transform = scale < 1 ? "scale(" + scale + ")" : "";
+      }
+
+      fitPreview();
+      window.addEventListener("resize", fitPreview);
+    })();
+  </script>
+</body>
+</html>

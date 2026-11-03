@@ -16,10 +16,10 @@
   var SPARKLINE_LIMIT = 20;
 
   var COLORS = {
-    line: "#e8590c",
-    point: "#d9480f",
-    axis: "#e5e7eb",
-    label: "#6b7280",
+    line: "#a34d1f",
+    point: "#7c3410",
+    axis: "#ded5c6",
+    label: "#7c7568",
   };
 
   function createSvg(width, height) {

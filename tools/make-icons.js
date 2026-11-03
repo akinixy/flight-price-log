@@ -2,7 +2,7 @@
 "use strict";
 
 // 生成扩展图标：纯 Node（只用 fs、zlib），无第三方依赖。
-// 设计：蓝色圆角方块 + 白色上升折线，16/32/48/128 使用同一构图。
+// 设计：墨色圆角方块 + 象牙色纸飞机 + 铜色价格轨迹。
 // 为改善小尺寸观感，按 4x 超采样渲染后取平均。
 // 用法：node tools/make-icons.js
 
@@ -13,14 +13,27 @@ const zlib = require("zlib");
 const OUTPUT_DIR = path.resolve(__dirname, "..", "icons");
 const SIZES = [16, 32, 48, 128];
 const SUPERSAMPLE = 4;
-const BACKGROUND = [0x25, 0x63, 0xeb];
-const LINE_COLOR = [255, 255, 255];
+const BACKGROUND = [0x10, 0x1e, 0x2b];
+const LINE_COLOR = [0xf4, 0xef, 0xe4];
+const ACCENT_COLOR = [0xc9, 0x7b, 0x3c];
 // 归一化坐标（相对图标边长）。
-const POINTS = [
-  [0.18, 0.72],
-  [0.4, 0.5],
-  [0.58, 0.6],
-  [0.82, 0.28],
+const TRAIL_POINTS = [
+  [0.15, 0.84],
+  [0.33, 0.67],
+  [0.44, 0.73],
+  [0.53, 0.57],
+];
+const PLANE_POLYGONS = [
+  [
+    [0.8, 0.2],
+    [0.28, 0.5],
+    [0.54, 0.55],
+  ],
+  [
+    [0.8, 0.2],
+    [0.54, 0.55],
+    [0.48, 0.82],
+  ],
 ];
 
 const PNG_SIGNATURE = Buffer.from([
@@ -109,28 +122,72 @@ function distanceToSegment(x, y, x1, y1, x2, y2) {
   return Math.hypot(x - (x1 + t * dx), y - (y1 + t * dy));
 }
 
+function insidePolygon(x, y, polygon) {
+  let inside = false;
+  for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i, i += 1) {
+    const xi = polygon[i][0];
+    const yi = polygon[i][1];
+    const xj = polygon[j][0];
+    const yj = polygon[j][1];
+    const intersects =
+      yi > y !== yj > y &&
+      x < ((xj - xi) * (y - yi)) / (yj - yi) + xi;
+    if (intersects) inside = !inside;
+  }
+  return inside;
+}
+
 function renderIcon(size) {
   const scale = SUPERSAMPLE;
   const canvasSize = size * scale;
-  const cornerRadius = size * 0.22 * scale;
-  const strokeRadius = (Math.max(1, size / 12) / 2) * scale;
+  const cornerRadius = size * 0.24 * scale;
+  const trailRadius = (Math.max(1, size / 16) / 2) * scale;
+  const foldRadius = size * 0.006 * scale;
 
-  const points = POINTS.map(function (point) {
+  const trail = TRAIL_POINTS.map(function (point) {
     return [point[0] * canvasSize, point[1] * canvasSize];
   });
+  const plane = PLANE_POLYGONS.map(function (polygon) {
+    return polygon.map(function (point) {
+      return [point[0] * canvasSize, point[1] * canvasSize];
+    });
+  });
+  const foldStart = plane[0][0];
+  const foldEnd = plane[0][2];
+  const showFold = size >= 48;
 
-  function isOnLine(x, y) {
-    for (let i = 0; i < points.length - 1; i += 1) {
-      const start = points[i];
-      const end = points[i + 1];
+  function isOnTrail(x, y) {
+    for (let i = 0; i < trail.length - 1; i += 1) {
+      const start = trail[i];
+      const end = trail[i + 1];
       if (
         distanceToSegment(x, y, start[0], start[1], end[0], end[1]) <=
-        strokeRadius
+        trailRadius
       ) {
         return true;
       }
     }
     return false;
+  }
+
+  function insidePlane(x, y) {
+    for (let i = 0; i < plane.length; i += 1) {
+      if (insidePolygon(x, y, plane[i])) return true;
+    }
+    return false;
+  }
+
+  function isOnFold(x, y) {
+    return (
+      distanceToSegment(
+        x,
+        y,
+        foldStart[0],
+        foldStart[1],
+        foldEnd[0],
+        foldEnd[1]
+      ) <= foldRadius
+    );
   }
 
   const pixels = Buffer.alloc(size * size * 4);
@@ -149,8 +206,13 @@ function renderIcon(size) {
           const sampleY = y * scale + sy + 0.5;
 
           let color = null;
-          if (isOnLine(sampleX, sampleY)) {
-            color = LINE_COLOR;
+          if (insidePlane(sampleX, sampleY)) {
+            color =
+              showFold && isOnFold(sampleX, sampleY)
+                ? BACKGROUND
+                : LINE_COLOR;
+          } else if (isOnTrail(sampleX, sampleY)) {
+            color = ACCENT_COLOR;
           } else if (
             insideRoundedSquare(sampleX, sampleY, canvasSize, cornerRadius)
           ) {
@@ -206,4 +268,8 @@ function main() {
   }
 }
 
-main();
+if (require.main === module) {
+  main();
+}
+
+module.exports = { createPng };

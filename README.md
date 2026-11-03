@@ -1,6 +1,6 @@
 # 航班价格记录簿
 
-> 版本：1.0.1 · 更新记录见 [CHANGELOG.md](CHANGELOG.md)
+> 版本：1.0.2 · 更新记录见 [CHANGELOG.md](CHANGELOG.md)
 
 一个 Chrome / Edge（Manifest V3）扩展。浏览携程中国大陆国内单程航班列表页时，自动把该航线、日期、舱位的最低价记录在本机；打开弹窗即可查看当前价格、历史最低价、价格趋势和最近一次航班明细。本扩展为非官方工具，与携程无关联。
 
@@ -85,6 +85,8 @@ node tools/make-icons.js
 ```
 
 `test-fixtures.js` 由 `tools/build-fixtures.js` 从本地保存的携程页面裁剪生成；完整页面文件不提交到仓库。
+
+商店上架所需的名称、描述、权限说明与素材见 [docs/store-listing.md](docs/store-listing.md)。
 
 ## 许可证
 
