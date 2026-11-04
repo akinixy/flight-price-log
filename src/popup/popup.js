@@ -14,7 +14,7 @@
   ];
   var ROUTE_SORT_MODES = [
     { key: "updated", label: "最近更新" },
-    { key: "price", label: "最低价" },
+    { key: "price", label: "当前最低价" },
     { key: "date", label: "出发日期" },
   ];
   var EMPTY_TEXT = "打开携程航班列表页后，这里会自动出现价格记录";
@@ -180,7 +180,7 @@
 
   function buildRouteToolbar() {
     var bar = el("div", "route-toolbar");
-    bar.appendChild(el("span", "route-toolbar-label", "排序"));
+    bar.appendChild(el("span", "route-toolbar-label", "航线排序"));
 
     var select = el("select", "route-sort-select");
     select.setAttribute("aria-label", "航线排序");
@@ -482,7 +482,7 @@
 
     if (allFlights.length > 1) {
       var sortBar = el("div", "flight-sort");
-      sortBar.appendChild(el("span", "flight-sort-label", "排序"));
+      sortBar.appendChild(el("span", "flight-sort-label", "航班排序"));
       SORT_MODES.forEach(function (mode) {
         var button = el("button", "sort-button", mode.label);
         button.type = "button";
@@ -777,7 +777,10 @@
     if (entries.length === 0) {
       app.appendChild(buildEmptyView());
     } else {
-      app.appendChild(buildRouteToolbar());
+      // 只有一条航线时排序没有意义，不占用顶部空间。
+      if (entries.length > 1) {
+        app.appendChild(buildRouteToolbar());
+      }
 
       var list = el("main", "route-list");
       entries.forEach(function (entry, index) {
