@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>航班价格总览 · 航班价格记录簿</title>
+    <link rel="stylesheet" href="../popup/popup.css" />
+    <link rel="stylesheet" href="dashboard.css" />
+  </head>
+  <body class="dashboard">
+    <div id="app" class="dashboard-app">
+      <header class="dashboard-header">
+        <div class="dashboard-heading">
+          <p class="dashboard-eyebrow">航班价格记录簿</p>
+          <h1>价格总览</h1>
+          <p class="dashboard-subtitle">
+            按具体航班查看历史价格，对比同一条航线不同日期的当前最低价。所有数据只保存在本机。
+          </p>
+        </div>
+        <div class="dashboard-actions">
+          <button id="refreshButton" class="button" type="button">刷新</button>
+          <a
+            class="button"
+            href="https://flights.ctrip.com/"
+            target="_blank"
+            rel="noopener noreferrer"
+            >前往携程</a
+          >
+        </div>
+      </header>
+
+      <main class="dashboard-main">
+        <section id="summary" class="summary-grid" aria-label="统计概览"></section>
+
+        <section class="panel filter-panel" aria-label="筛选">
+          <label class="filter-field">
+            <span>航线组</span>
+            <select id="groupSelect"></select>
+          </label>
+          <div id="dateChips" class="date-chips" aria-label="日期"></div>
+        </section>
+
+        <div class="dashboard-grid">
+          <section class="panel date-panel">
+            <div class="panel-heading">
+              <h2>日期对比</h2>
+              <span id="dateHint" class="panel-hint"></span>
+            </div>
+            <div id="dateOverview"></div>
+          </section>
+
+          <section class="panel trend-panel">
+            <div class="panel-heading">
+              <h2>单航班趋势</h2>
+              <span class="panel-hint">价格变化才会新增样本，价格不变时每小时最多一个点</span>
+            </div>
+            <div id="trendBody"></div>
+          </section>
+
+          <section class="panel matrix-panel">
+            <div class="panel-heading">
+              <h2>航班 × 日期</h2>
+              <span class="panel-hint">单元格为各日期最近一次记录中的当前价</span>
+            </div>
+            <div id="matrix"></div>
+          </section>
+
+          <section class="panel compare-panel">
+            <div class="panel-heading">
+              <h2>日期明细</h2>
+            </div>
+            <div id="comparison"></div>
+          </section>
+        </div>
+      </main>
+
+      <footer class="dashboard-footer">数据仅保存在本机浏览器</footer>
+    </div>
+
+    <script src="../shared/format.js"></script>
+    <script src="../shared/flight.js"></script>
+    <script src="../popup/chart.js"></script>
+    <script src="../shared/model.js"></script>
+    <script src="dashboard.js"></script>
+  </body>
+</html>

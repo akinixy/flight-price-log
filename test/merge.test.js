@@ -332,3 +332,49 @@ test("mergeSnapshot 限制路线总数并淘汰最久未更新", () => {
   assert.ok(result.routes[KEY], "当前航线保留");
   assert.ok(!result.routes["oneway:OLD0"], "最久未更新的被淘汰");
 });
+
+test("mergeSnapshot 为每个航班建立序列并按价格变化追加", () => {
+  const first = CtripStore.mergeSnapshot({}, makeSnapshot(), t0);
+  assert.equal(first.ok, true);
+  const route = first.routes[KEY];
+  const id = "FM9071+FM9366|20:25|10:35+1";
+  assert.ok(route.flightHistory[id]);
+  assert.deepEqual(route.flightHistory[id].samples, [[t0, 520]]);
+
+  const changed = makeSnapshot({
+    t: t0 + 60000,
+    minPrice: 500,
+    minFlightNo: "FM9366",
+    flights: [makeFlight({ no: "FM9366/FM9071", price: 500, departTime: "20:25", arriveTime: "10:35+1" })],
+  });
+  const second = CtripStore.mergeSnapshot(first.routes, changed, t0 + 60000);
+  assert.equal(second.result, "updated");
+  assert.deepEqual(second.routes[KEY].flightHistory[id].samples, [
+    [t0, 520],
+    [t0 + 60000, 500],
+  ]);
+
+  const same = makeSnapshot({
+    t: t0 + 120000,
+    minPrice: 500,
+    minFlightNo: "FM9366",
+    flights: [makeFlight({ no: "FM9366/FM9071", price: 500, departTime: "20:25", arriveTime: "10:35+1" })],
+  });
+  const third = CtripStore.mergeSnapshot(second.routes, same, t0 + 120000);
+  assert.equal(third.routes[KEY].flightHistory[id].samples.length, 2);
+});
+
+test("mergeSnapshot 不修改传入的 routes", () => {
+  const first = CtripStore.mergeSnapshot({}, makeSnapshot(), t0);
+  const before = JSON.stringify(first.routes);
+  CtripStore.mergeSnapshot(
+    first.routes,
+    makeSnapshot({
+      t: t0 + 60000,
+      minPrice: 500,
+      flights: [makeFlight({ no: "MU5101", price: 500 })],
+    }),
+    t0 + 60000
+  );
+  assert.equal(JSON.stringify(first.routes), before);
+});

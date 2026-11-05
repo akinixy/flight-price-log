@@ -242,6 +242,7 @@
 </script>
 
 <script src="src/shared/format.js"></script>
+<script src="src/shared/flight.js"></script>
 <script src="src/shared/backup.js"></script>
 <script src="src/popup/chart.js"></script>
 <script src="src/popup/popup.js"></script>
@@ -403,6 +404,15 @@
       check("存在导出按钮", !!exportButton);
       check("存在导入按钮", !!importButton);
       check("存在导入文件输入", !!importInput);
+      var dashboardLink = document.querySelector(
+        '[data-action="open-dashboard"]'
+      );
+      check("存在完整面板入口", !!dashboardLink);
+      check(
+        "完整面板链接指向 dashboard",
+        !!dashboardLink &&
+          dashboardLink.getAttribute("href").indexOf("dashboard/dashboard.html") !== -1
+      );
 
       // 4. 展开明细。
       var expectedRouteAUrl =
@@ -484,7 +494,7 @@
             Array.prototype.map.call(sortButtons, function (button) {
               return textOf(button);
             })
-          ) === JSON.stringify(["价格", "用时", "起飞"])
+          ) === JSON.stringify(["价格 ↑", "用时", "起飞"])
         );
         check(
           "默认按价格排序",
@@ -495,17 +505,14 @@
         );
         check("默认第一行为最低价航班", firstCodes(1)[0] === "FM9366/FM9071");
 
-        var directionButton = details.querySelector(
-          '[data-action="sort-direction"]'
-        );
-        check("存在排序方向按钮", !!directionButton);
-        check("默认升序", !!directionButton && textOf(directionButton) === "↑");
-        if (directionButton) {
-          directionButton.click();
+        var activeSort = details.querySelector(".sort-button.is-active");
+        check("默认升序标记在价格按钮", !!activeSort && textOf(activeSort) === "价格 ↑");
+        if (activeSort) {
+          activeSort.click();
           await nextTick();
-          check("切换为降序", textOf(directionButton) === "↓");
+          check("点击已选排序切换为降序", textOf(activeSort) === "价格 ↓");
           check("降序时最贵航班在前", firstCodes(1)[0] === "GJ1010");
-          directionButton.click();
+          activeSort.click();
           await nextTick();
           check("切回升序", firstCodes(1)[0] === "FM9366/FM9071");
         }

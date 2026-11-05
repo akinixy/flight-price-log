@@ -151,8 +151,7 @@
     evalGeneration += 1;
     var incoming = result.snapshot.flights || [];
     for (var i = 0; i < incoming.length; i += 1) {
-      seenGeneration[incoming[i].no + "|" + incoming[i].departTime] =
-        evalGeneration;
+      seenGeneration[CtripParser.flightIdentity(incoming[i])] = evalGeneration;
     }
     if (incoming.length > maxDomItems) maxDomItems = incoming.length;
 

@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>仪表盘测试</title>
+<link rel="stylesheet" href="src/popup/popup.css">
+<link rel="stylesheet" href="src/dashboard/dashboard.css">
+<style>
+  #result { margin: 12px; padding: 8px; border-radius: 6px; background: #fff; font: 12px/1.6 Consolas, monospace; white-space: pre-wrap; }
+  #result[data-result="fail"] { color: #b42318; border: 1px solid #fecaca; }
+  #result[data-result="pass"] { color: #067647; border: 1px solid #bbf7d0; }
+</style>
+</head>
+<body class="dashboard">
+<div id="app" class="dashboard-app">
+  <header class="dashboard-header">
+    <div class="dashboard-heading"><p class="dashboard-eyebrow">航班价格记录簿</p><h1>价格总览</h1><p class="dashboard-subtitle">test</p></div>
+    <div class="dashboard-actions"><button id="refreshButton" class="button" type="button">刷新</button></div>
+  </header>
+  <main class="dashboard-main">
+    <section id="summary" class="summary-grid"></section>
+    <section class="panel filter-panel">
+      <label class="filter-field"><span>航线组</span><select id="groupSelect"></select></label>
+      <div id="dateChips" class="date-chips"></div>
+    </section>
+    <div class="dashboard-grid">
+      <section class="panel date-panel"><div class="panel-heading"><h2>日期对比</h2><span id="dateHint" class="panel-hint"></span></div><div id="dateOverview"></div></section>
+      <section class="panel trend-panel"><div class="panel-heading"><h2>单航班趋势</h2></div><div id="trendBody"></div></section>
+      <section class="panel matrix-panel"><div class="panel-heading"><h2>航班 × 日期</h2></div><div id="matrix"></div></section>
+      <section class="panel compare-panel"><div class="panel-heading"><h2>日期明细</h2></div><div id="comparison"></div></section>
+    </div>
+  </main>
+</div>
+<div id="result" data-result="fail">运行中…</div>
+
+<script>
+(function () {
+  "use strict";
+  var KEY_A = "oneway:SHA-PEK:2026-11-18:y_s_c_f";
+  var KEY_B = "oneway:SHA-PEK:2026-11-19:y_s_c_f";
+  var KEY_C = "oneway:SHA-PEK:2026-11-18:c_f";
+  var store = { ctripRoutes: {} };
+
+  function series(no, depart, arrive, samples) {
+    return {
+      no: no, airline: "东方航空", departTime: depart, arriveTime: arrive,
+      transfers: 0, firstSeenAt: samples[0][0],
+      lastSeenAt: samples[samples.length - 1][0],
+      latestPrice: samples[samples.length - 1][1], samples: samples
+    };
+  }
+  function route(date, cabin, price, no, flights, history, flightHistory) {
+    return {
+      key: "x", originCode: "SHA", originName: "上海", destCode: "PEK", destName: "北京",
+      departDate: date, cabin: cabin, currency: "CNY",
+      url: "https://flights.ctrip.com/online/list/oneway-sha-pek?depdate=" + date + "&cabin=" + cabin,
+      createdAt: 800, updatedAt: history[history.length - 1].t,
+      latest: { t: history[history.length - 1].t, minPrice: price, minFlightNo: no, flights: flights },
+      history: history, flightHistory: flightHistory
+    };
+  }
+
+  store.ctripRoutes[KEY_A] = route("2026-11-18", "y_s_c_f", 650, "CA1832", [
+    { no: "MU5101", airline: "东方航空", departTime: "07:00", arriveTime: "09:15", transfers: 0, price: 680 },
+    { no: "CA1832", airline: "中国国航", departTime: "08:00", arriveTime: "10:20", transfers: 0, price: 650 }
+  ], [
+    { t: 800, minPrice: 760, minFlightNo: "MU5101" },
+    { t: 1000, minPrice: 650, minFlightNo: "CA1832" }
+  ], {
+    "MU5101|07:00|09:15": series("MU5101", "07:00", "09:15", [[800, 760], [1000, 680]]),
+    "CA1832|08:00|10:20": series("CA1832", "08:00", "10:20", [[1000, 650]])
+  });
+
+  store.ctripRoutes[KEY_B] = route("2026-11-19", "y_s_c_f", 640, "MU5101", [
+    { no: "MU5101", airline: "东方航空", departTime: "07:00", arriveTime: "09:15", transfers: 0, price: 640 }
+  ], [
+    { t: 1200, minPrice: 640, minFlightNo: "MU5101" }
+  ], {
+    "MU5101|07:00|09:15": series("MU5101", "07:00", "09:15", [[1200, 640]])
+  });
+
+  store.ctripRoutes[KEY_C] = route("2026-11-18", "c_f", 1680, "MU5101", [
+    { no: "MU5101", airline: "东方航空", departTime: "07:00", arriveTime: "09:15", transfers: 0, price: 1680 }
+  ], [
+    { t: 1100, minPrice: 1680, minFlightNo: "MU5101" }
+  ], {
+    "MU5101|07:00|09:15": series("MU5101", "07:00", "09:15", [[1100, 1680]])
+  });
+
+  window.__testStore = store;
+  window.chrome = window.chrome || {};
+  window.chrome.storage = {
+    local: {
+      get: async function () { return { ctripRoutes: store.ctripRoutes }; },
+      set: async function (obj) { Object.assign(store, obj); }
+    },
+    onChanged: { addListener: function () {} }
+  };
+})();
+</script>
+
+<script src="src/shared/format.js"></script>
+<script src="src/shared/flight.js"></script>
+<script src="src/popup/chart.js"></script>
+<script src="src/shared/model.js"></script>
+<script src="src/dashboard/dashboard.js"></script>
+<script>
+(function () {
+  "use strict";
+  var result = document.getElementById("result");
+  var passed = 0;
+  var failures = [];
+  function check(name, condition) {
+    if (condition) passed += 1;
+    else failures.push(name);
+  }
+  function text(node) { return node ? node.textContent.trim() : ""; }
+  function nextTick() { return new Promise(function (resolve) { setTimeout(resolve, 0); }); }
+
+  async function run() {
+    await globalThis.__dashboardReady;
+    await nextTick();
+
+    var cards = document.querySelectorAll(".summary-card");
+    check("统计卡 6 张", cards.length === 6);
+    var groupOptions = document.querySelectorAll("#groupSelect option");
+    check("航线组选项 2 个", groupOptions.length === 2);
+    check("日期芯片 2 个", document.querySelectorAll(".date-chip").length === 2);
+    check("日期卡 2 个", document.querySelectorAll(".date-card").length === 2);
+    check("最低价标记存在", !!document.querySelector(".best-badge"));
+    check("日期明细行 2 行", document.querySelectorAll("#comparison tbody tr").length === 2);
+    check("矩阵存在", !!document.querySelector(".matrix-table"));
+    check("趋势图 SVG 存在", !!document.querySelector(".trend-chart svg"));
+    var trendSelect = document.querySelector("#trendBody select");
+    check(
+      "默认选中最低价航班",
+      !!trendSelect &&
+        !!trendSelect.options[trendSelect.selectedIndex] &&
+        trendSelect.options[trendSelect.selectedIndex].textContent.indexOf("CA1832") !== -1
+    );
+    check("历史表存在", !!document.querySelector(".trend-chart + .table-wrap"));
+
+    var firstChip = document.querySelector(".date-chip");
+    if (firstChip) {
+      firstChip.click();
+      await nextTick();
+      check("日期切换后仍显示趋势", !!document.querySelector(".trend-chart svg"));
+    }
+
+    document.getElementById("groupSelect").value =
+      "SHA-PEK:c_f";
+    document.getElementById("groupSelect").dispatchEvent(new Event("change"));
+    await nextTick();
+    check("切换舱位组后日期卡 1 张", document.querySelectorAll(".date-card").length === 1);
+    check("切换舱位组后价格更新", text(document.querySelector(".date-card-price")) === "¥1,680");
+
+    result.setAttribute("data-result", failures.length ? "fail" : "pass");
+    result.textContent = failures.length
+      ? "FAIL: " + failures.length + " 项失败\n" + failures.join("\n")
+      : "PASS: " + passed;
+  }
+
+  run().catch(function (error) {
+    result.setAttribute("data-result", "fail");
+    result.textContent = "FAIL: " + (error && error.message ? error.message : error);
+  });
+})();
+</script>
+</body>
+</html>

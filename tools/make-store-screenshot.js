@@ -16,6 +16,8 @@ const POPUP_PAGE_PATH = path.join(ROOT, "store", "popup-preview.html");
 const POPUP_OUT_PATH = path.join(ROOT, "store", "popup-shot.png");
 const PAGE_PATH = path.join(ROOT, "store", "screenshot.html");
 const OUT_PATH = path.join(ROOT, "store", "screenshot-1.png");
+const DASHBOARD_PAGE_PATH = path.join(ROOT, "store", "dashboard-preview.html");
+const DASHBOARD_OUT_PATH = path.join(ROOT, "store", "dashboard-screenshot-1.png");
 
 const BROWSER_CANDIDATES = [
   process.env.EDGE_PATH,
@@ -104,6 +106,13 @@ function main() {
     console.log(
       "[make-store-screenshot] wrote " +
         path.relative(process.cwd(), OUT_PATH) +
+        " (1280x800)"
+    );
+
+    capture(browser, DASHBOARD_PAGE_PATH, DASHBOARD_OUT_PATH, 1280, 800);
+    console.log(
+      "[make-store-screenshot] wrote " +
+        path.relative(process.cwd(), DASHBOARD_OUT_PATH) +
         " (1280x800)"
     );
   } catch (error) {

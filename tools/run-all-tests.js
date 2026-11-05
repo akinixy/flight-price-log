@@ -39,6 +39,8 @@ run("Node 单元测试", [
   "test/format.test.js",
   "test/record.test.js",
   "test/backup.test.js",
+  "test/flight.test.js",
+  "test/model.test.js",
   "test/manifest.test.js",
 ]);
 
@@ -47,6 +49,7 @@ run("Node 单元测试", [
   "test-parser.html",
   "test-chart.html",
   "test-popup.html",
+  "test-dashboard.html",
 ].forEach(function (file) {
   run("浏览器测试 " + file, ["tools/run-browser-test.js", file]);
 });

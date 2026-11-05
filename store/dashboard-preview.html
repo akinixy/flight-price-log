@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>航班价格总览 · 航班价格记录簿</title>
+<link rel="stylesheet" href="../src/popup/popup.css">
+<link rel="stylesheet" href="../src/dashboard/dashboard.css">
+</head>
+<body class="dashboard">
+<div id="app" class="dashboard-app">
+  <header class="dashboard-header">
+    <div class="dashboard-heading">
+      <p class="dashboard-eyebrow">航班价格记录簿</p>
+      <h1>价格总览</h1>
+      <p class="dashboard-subtitle">按具体航班查看历史价格，对比同一条航线不同日期的当前最低价。所有数据只保存在本机。</p>
+    </div>
+    <div class="dashboard-actions">
+      <button id="refreshButton" class="button" type="button">刷新</button>
+      <a class="button" href="https://flights.ctrip.com/" target="_blank" rel="noopener noreferrer">前往携程</a>
+    </div>
+  </header>
+  <main class="dashboard-main">
+    <section id="summary" class="summary-grid" aria-label="统计概览"></section>
+    <section class="panel filter-panel" aria-label="筛选">
+      <label class="filter-field"><span>航线组</span><select id="groupSelect"></select></label>
+      <div id="dateChips" class="date-chips" aria-label="日期"></div>
+    </section>
+    <div class="dashboard-grid">
+      <section class="panel date-panel">
+        <div class="panel-heading"><h2>日期对比</h2><span id="dateHint" class="panel-hint"></span></div>
+        <div id="dateOverview"></div>
+      </section>
+      <section class="panel trend-panel">
+        <div class="panel-heading"><h2>单航班趋势</h2><span class="panel-hint">价格变化才会新增样本，价格不变时每小时最多一个点</span></div>
+        <div id="trendBody"></div>
+      </section>
+      <section class="panel matrix-panel">
+        <div class="panel-heading"><h2>航班 × 日期</h2><span class="panel-hint">单元格为各日期最近一次记录中的当前价</span></div>
+        <div id="matrix"></div>
+      </section>
+      <section class="panel compare-panel">
+        <div class="panel-heading"><h2>日期明细</h2></div>
+        <div id="comparison"></div>
+      </section>
+    </div>
+  </main>
+  <footer class="dashboard-footer">数据仅保存在本机浏览器</footer>
+</div>
+
+<script>
+(function () {
+  "use strict";
+  var KEY_A = "oneway:SHA-PEK:2026-11-18:y_s_c_f";
+  var KEY_B = "oneway:SHA-PEK:2026-11-19:y_s_c_f";
+  var KEY_C = "oneway:SHA-PEK:2026-11-18:c_f";
+  var store = { ctripRoutes: {} };
+  var t1 = new Date(2026, 10, 2, 9, 0).getTime();
+  var t2 = new Date(2026, 10, 2, 9, 20).getTime();
+  var t3 = new Date(2026, 10, 2, 9, 40).getTime();
+
+  function series(no, airline, depart, arrive, samples) {
+    return {
+      no: no, airline: airline, departTime: depart, arriveTime: arrive,
+      transfers: 0, firstSeenAt: samples[0][0],
+      lastSeenAt: samples[samples.length - 1][0],
+      latestPrice: samples[samples.length - 1][1], samples: samples
+    };
+  }
+  function route(date, cabin, price, no, flights, history, flightHistory, updatedAt) {
+    return {
+      key: "x", originCode: "SHA", originName: "上海", destCode: "PEK", destName: "北京",
+      departDate: date, cabin: cabin, currency: "CNY",
+      url: "https://flights.ctrip.com/online/list/oneway-sha-pek?depdate=" + date + "&cabin=" + cabin,
+      createdAt: t1, updatedAt: updatedAt,
+      latest: { t: updatedAt, minPrice: price, minFlightNo: no, flights: flights },
+      history: history, flightHistory: flightHistory
+    };
+  }
+
+  store.ctripRoutes[KEY_A] = route("2026-11-18", "y_s_c_f", 680, "MU5101", [
+    { no: "MU5101", airline: "东方航空", departTime: "07:00", arriveTime: "09:15", transfers: 0, price: 680 },
+    { no: "CA1832", airline: "中国国航", departTime: "08:00", arriveTime: "10:20", transfers: 0, price: 720 },
+    { no: "HU7602", airline: "海南航空", departTime: "09:10", arriveTime: "11:30", transfers: 0, price: 760 }
+  ], [
+    { t: t1, minPrice: 760, minFlightNo: "HU7602" },
+    { t: t2, minPrice: 700, minFlightNo: "CA1832" },
+    { t: t3, minPrice: 680, minFlightNo: "MU5101" }
+  ], {
+    "MU5101|07:00|09:15": series("MU5101", "东方航空", "07:00", "09:15", [[t1, 760], [t2, 700], [t3, 680]]),
+    "CA1832|08:00|10:20": series("CA1832", "中国国航", "08:00", "10:20", [[t1, 780], [t2, 720], [t3, 720]]),
+    "HU7602|09:10|11:30": series("HU7602", "海南航空", "09:10", "11:30", [[t1, 760], [t2, 760], [t3, 760]])
+  }, t3);
+
+  store.ctripRoutes[KEY_B] = route("2026-11-19", "y_s_c_f", 640, "MU5101", [
+    { no: "MU5101", airline: "东方航空", departTime: "07:00", arriveTime: "09:15", transfers: 0, price: 640 },
+    { no: "CA1832", airline: "中国国航", departTime: "08:00", arriveTime: "10:20", transfers: 0, price: 700 }
+  ], [
+    { t: t1, minPrice: 700, minFlightNo: "CA1832" },
+    { t: t3, minPrice: 640, minFlightNo: "MU5101" }
+  ], {
+    "MU5101|07:00|09:15": series("MU5101", "东方航空", "07:00", "09:15", [[t1, 700], [t3, 640]]),
+    "CA1832|08:00|10:20": series("CA1832", "中国国航", "08:00", "10:20", [[t1, 700], [t3, 700]])
+  }, t3 - 60000);
+
+  store.ctripRoutes[KEY_C] = route("2026-11-18", "c_f", 1680, "MU5101", [
+    { no: "MU5101", airline: "东方航空", departTime: "07:00", arriveTime: "09:15", transfers: 0, price: 1680 }
+  ], [
+    { t: t2, minPrice: 1680, minFlightNo: "MU5101" },
+    { t: t3, minPrice: 1680, minFlightNo: "MU5101" }
+  ], {
+    "MU5101|07:00|09:15": series("MU5101", "东方航空", "07:00", "09:15", [[t2, 1680], [t3, 1680]])
+  }, t3 - 120000);
+
+  window.chrome = window.chrome || {};
+  window.chrome.storage = {
+    local: {
+      get: async function () { return { ctripRoutes: store.ctripRoutes }; },
+      set: async function (obj) { Object.assign(store, obj); }
+    },
+    onChanged: { addListener: function () {} }
+  };
+})();
+</script>
+<script src="../src/shared/format.js"></script>
+<script src="../src/shared/flight.js"></script>
+<script src="../src/popup/chart.js"></script>
+<script src="../src/shared/model.js"></script>
+<script src="../src/dashboard/dashboard.js"></script>
+</body>
+</html>

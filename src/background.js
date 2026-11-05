@@ -1,6 +1,6 @@
 "use strict";
 
-importScripts("shared/merge.js", "shared/record.js");
+importScripts("shared/flight.js", "shared/merge.js", "shared/record.js");
 
 var STORAGE_KEY = "ctripRoutes";
 var DELETED_KEY = "ctripDeleted";
@@ -51,10 +51,27 @@ async function record(snapshot, pageStartedAt) {
       return { ok: true, result: "ignored" };
     }
 
-    await chrome.storage.local.set({
+    const payload = {
       [STORAGE_KEY]: applied.routes,
       [DELETED_KEY]: applied.deleted,
-    });
+    };
+
+    try {
+      await chrome.storage.local.set(payload);
+    } catch (error) {
+      if (!/QUOTA_BYTES/i.test(errorMessage(error))) {
+        return { ok: false, error: errorMessage(error) };
+      }
+
+      // 配额不足时做一次更激进的压缩再重试，避免一次写入失败后长期不再保存。
+      const compacted = CtripStore.compactRoutes(applied.routes, Date.now());
+      await chrome.storage.local.set({
+        [STORAGE_KEY]: compacted,
+        [DELETED_KEY]: applied.deleted,
+      });
+      return { ok: true, result: applied.result, compacted: true };
+    }
+
     return { ok: true, result: applied.result };
   } catch (error) {
     return { ok: false, error: errorMessage(error) };

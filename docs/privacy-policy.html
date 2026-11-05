@@ -123,7 +123,7 @@
   <main>
     <p class="eyebrow">航班价格记录簿</p>
     <h1>隐私政策</h1>
-    <p class="meta">生效日期：2026 年 11 月 2 日 · 最后更新：2026 年 11 月 2 日</p>
+    <p class="meta">生效日期：2026 年 11 月 2 日 · 最后更新：2026 年 11 月 4 日</p>
 
     <p>「航班价格记录簿」是一款浏览器扩展（以下简称“本扩展”）。本扩展不是携程官方产品，与携程无关联。本政策说明本扩展处理哪些信息、如何存储，以及你可以如何控制这些信息。</p>
 
@@ -132,18 +132,19 @@
     <ul>
       <li>航线（出发地、目的地）、出发日期、舱位；</li>
       <li>航班价格、航班号、航空公司、起降时间、中转或经停信息；</li>
-      <li>记录时间，以及同一航线、日期、舱位下的历史价格点。</li>
+      <li>记录时间，同一航线、日期、舱位下的历史价格点，以及按「航班号 + 起降时间」保存的每班价格样本。</li>
     </ul>
     <p>本扩展还会在本地保存你的设置（是否开启自动采集），以及你主动导出或导入的 JSON 备份文件中的上述记录。</p>
     <p>本扩展<strong>不会</strong>收集你的姓名、账号、手机号、身份证件、支付信息、精确位置、携程登录凭据或 Cookies，也不会读取当前航班列表页之外的浏览记录。</p>
 
     <h2>2. 信息如何存储</h2>
     <p>所有记录只保存在你当前浏览器配置文件的扩展本地存储中，不会上传到任何服务器。本扩展不包含统计、广告、崩溃上报或任何第三方 SDK，也不会发起网络请求。</p>
-    <p>为了控制占用，同一航线、日期、舱位在 30 分钟内的多次记录会合并为一个价格点；单条航线最多保留 1000 个价格点和 200 条航班明细；最多保存 100 条航线，超出时淘汰最久未更新的航线。</p>
+    <p>为了控制占用，同一航线、日期、舱位在 30 分钟内的多次记录会合并为一个价格点；单条航线最多保留 1000 个价格点和 200 条航班明细；最多保存 100 条航线，超出时淘汰最久未更新的航线。每班价格历史最多保留 240 个样本，全局最多 300 个航班序列，样本和序列保留 90 天；为控制浏览器存储上限，航线历史总点数也会做全局裁剪。</p>
 
     <h2>3. 信息如何使用</h2>
     <ul>
       <li>在扩展弹窗中展示当前价格、历史最低价、价差、趋势和最近一次航班明细；</li>
+      <li>在完整面板中对比同航线不同日期的价格，并查看单航班价格趋势；</li>
       <li>按价格、用时、起飞时间排序，帮助你比较航班；</li>
       <li>在你主动操作时导出或导入本地 JSON 备份。</li>
     </ul>
@@ -181,7 +182,7 @@
     <hr>
 
     <h2>English summary</h2>
-    <p>Flight Price Log is an unofficial browser extension. It reads flight prices and flight details displayed on Ctrip's domestic one-way flight list pages and stores them only in your browser's local storage. It does not collect, transmit, sell, or share personal data, and it makes no network requests. You can disable automatic collection, delete individual routes, clear all data in the popup, or uninstall the extension. Contact: <a href="https://github.com/akinixy/flight-price-log/issues">GitHub Issues</a>.</p>
+    <p>Flight Price Log is an unofficial browser extension. It reads flight prices and flight details displayed on Ctrip's domestic one-way flight list pages and stores them only in your browser's local storage, including per-flight price samples used by the dashboard. It does not collect, transmit, sell, or share personal data, and it makes no network requests. You can disable automatic collection, delete individual routes, clear all data in the popup, or uninstall the extension. Contact: <a href="https://github.com/akinixy/flight-price-log/issues">GitHub Issues</a>.</p>
 
     <footer>航班价格记录簿 · 本页面可公开访问，供浏览器扩展商店审核与用户查阅。</footer>
   </main>

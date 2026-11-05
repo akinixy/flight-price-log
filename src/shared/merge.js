@@ -12,6 +12,13 @@
 })(typeof globalThis !== "undefined" ? globalThis : this, function () {
   "use strict";
 
+  var flight =
+    typeof CtripFlight !== "undefined" && CtripFlight
+      ? CtripFlight
+      : typeof require === "function"
+        ? require("./flight.js")
+        : null;
+
   var THROTTLE_MS = 1800000;
   var MAX_HISTORY = 1000;
   var MAX_FLIGHTS = 200;
@@ -261,6 +268,14 @@
       entry.history = history;
     }
 
+    entry.flightHistory = flight
+      ? flight.mergeFlightHistory(
+          existing && existing.flightHistory,
+          snapshot.flights,
+          snapshot.t
+        )
+      : {};
+
     var nextRoutes = {};
     var keys = Object.keys(base);
     for (var i = 0; i < keys.length; i += 1) {
@@ -289,6 +304,8 @@
       delete nextRoutes[oldestKey];
     }
 
+    if (flight) nextRoutes = flight.enforceBudgets(nextRoutes, now);
+
     return { ok: true, routes: nextRoutes, result: result };
   }
 
@@ -300,5 +317,11 @@
     validateSnapshot: validateSnapshot,
     shouldIgnoreSnapshot: shouldIgnoreSnapshot,
     mergeSnapshot: mergeSnapshot,
+    enforceBudgets: function (routes, now, options) {
+      return flight ? flight.enforceBudgets(routes, now, options) : routes;
+    },
+    compactRoutes: function (routes, now) {
+      return flight ? flight.compactRoutes(routes, now) : routes;
+    },
   };
 });

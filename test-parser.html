@@ -18,6 +18,7 @@
 <div id="result" data-result="fail">运行中…</div>
 
 <script src="test-fixtures.js"></script>
+<script src="src/shared/flight.js"></script>
 <script src="src/content/parser.js"></script>
 <script src="src/shared/merge.js"></script>
 <script>
@@ -61,12 +62,15 @@
     var departBox = options.departTime
       ? '<div class="depart-box"><div class="time">' + options.departTime + "</div></div>"
       : '<div class="depart-box"></div>';
+    var priceHtml =
+      options.priceHtml ||
+      '<div class="price">' + options.priceText + "</div>";
     return (
       '<div class="flight-item">' +
         '<div class="flight-row">' +
           '<div class="flight-airline">' +
             '<div class="airline-item">' +
-              '<div class="airline-name">' + options.airline +
+              '<div class="airline-name">' + (options.airlineHtml || options.airline) +
                 '<div class="plane"><span class="plane-No">' + options.no + "&nbsp;<span>波音738(中)</span></span></div>" +
               "</div>" +
             "</div>" +
@@ -78,7 +82,7 @@
           "</div>" +
         "</div>" +
         '<div class="flight-operate">' +
-          '<div class="flight-price"><div class="price">' + options.priceText + "</div></div>" +
+          '<div class="flight-price">' + priceHtml + "</div>" +
         "</div>" +
       "</div>"
     );
@@ -216,6 +220,136 @@
     ]);
     var rebateFlights = CtripParser.parseFlights(rebateDoc);
     assertEqual("返现价格不拼接", rebateFlights[0].price, 520);
+
+    // 场景 8b2：航司名在子元素里时回退提取
+    var nestedAirline = CtripParser.parseFlights(buildDoc([
+      buildFlightCard({
+        priceText: "¥530",
+        no: "CZ3311/CZ3605",
+        airlineHtml: "<span>南方航空</span>",
+        departTime: "10:05",
+        arriveTime: "23:15",
+      }),
+    ]));
+    assertEqual("子元素航司名回退", nestedAirline[0].airline, "南方航空");
+
+    // 场景 8c：促销词、费用、划线价与同卡多价格节点
+    var promoOnly = CtripParser.parseFlights(buildDoc([
+      buildFlightCard({
+        priceText: "券后¥450",
+        no: "CA1401",
+        airline: "中国国航",
+        departTime: "08:00",
+        arriveTime: "10:00",
+      }),
+    ]));
+    assertEqual("券后价不作为正式票价", promoOnly.length, 0);
+
+    var mixedPromo = CtripParser.parseFlights(buildDoc([
+      buildFlightCard({
+        priceText: "¥520 券后¥450",
+        no: "CA1402",
+        airline: "中国国航",
+        departTime: "08:10",
+        arriveTime: "10:10",
+      }),
+    ]));
+    assertEqual("券后价旁保留正式价", mixedPromo[0].price, 520);
+
+    var feePrice = CtripParser.parseFlights(buildDoc([
+      buildFlightCard({
+        priceText: "¥520 + ¥50 机建",
+        no: "CA1403",
+        airline: "中国国航",
+        departTime: "08:20",
+        arriveTime: "10:20",
+      }),
+    ]));
+    assertEqual("机建费不计入票价", feePrice[0].price, 520);
+
+    var couponClass = CtripParser.parseFlights(buildDoc([
+      buildFlightCard({
+        priceHtml:
+          '<div class="price coupon-price">¥450</div><div class="price">¥520</div>',
+        no: "CA1404",
+        airline: "中国国航",
+        departTime: "08:30",
+        arriveTime: "10:30",
+      }),
+    ]));
+    assertEqual("促销类名价格被排除", couponClass[0].price, 520);
+
+    var twoFormal = CtripParser.parseFlights(buildDoc([
+      buildFlightCard({
+        priceHtml: '<div class="price">¥560</div><div class="price">¥520</div>',
+        no: "CA1405",
+        airline: "中国国航",
+        departTime: "08:40",
+        arriveTime: "10:40",
+      }),
+    ]));
+    assertEqual("同卡多个正式价取最低", twoFormal[0].price, 520);
+
+    var strikePrice = CtripParser.parseFlights(buildDoc([
+      buildFlightCard({
+        priceHtml:
+          '<del class="price">¥800</del><div class="price">¥520</div>',
+        no: "CA1406",
+        airline: "中国国航",
+        departTime: "08:50",
+        arriveTime: "10:50",
+      }),
+    ]));
+    assertEqual("划线价被排除", strikePrice[0].price, 520);
+
+    var lowFare = CtripParser.parseFlights(buildDoc([
+      buildFlightCard({
+        priceText: "¥99",
+        no: "CA1407",
+        airline: "中国国航",
+        departTime: "09:00",
+        arriveTime: "11:00",
+      }),
+      buildFlightCard({
+        priceText: "¥49",
+        no: "CA1408",
+        airline: "中国国航",
+        departTime: "09:10",
+        arriveTime: "11:10",
+      }),
+    ]));
+    assertEqual("99 元特价保留", lowFare.length, 1);
+    assertEqual("99 元价格正确", lowFare[0].price, 99);
+
+    var sameFlight = CtripParser.parseFlights(buildDoc([
+      buildFlightCard({
+        priceText: "¥920",
+        no: "CA1409",
+        airline: "中国国航",
+        departTime: "09:20",
+        arriveTime: "11:20",
+      }),
+      buildFlightCard({
+        priceText: "¥900",
+        no: "CA1409",
+        airline: "中国国航",
+        departTime: "09:20",
+        arriveTime: "11:20",
+      }),
+    ]));
+    assertEqual("同航班多卡只保留一条", sameFlight.length, 1);
+    assertEqual("同航班多卡取低正式价", sameFlight[0].price, 900);
+
+    var attrPrice = CtripParser.parseFlights(buildDoc([
+      buildFlightCard({
+        priceHtml: '<div class="price" data-price="520">券后价</div>',
+        no: "CA1410",
+        airline: "中国国航",
+        departTime: "09:30",
+        arriveTime: "11:30",
+      }),
+    ]));
+    assertEqual("data-price 优先", attrPrice[0].price, 520);
 
     // 场景 9：无效价格被跳过
     var invalidPriceDoc = buildDoc([
@@ -562,11 +696,11 @@
 
     // 场景 17：按最后看到轮次清理过期航班
     var seen = {};
-    seen["CA1001|08:00"] = 2;
-    seen["CA1002|09:00"] = 1;
+    seen["CA1001|08:00|10:00"] = 2;
+    seen["CA1002|09:00|11:00"] = 1;
     var pruneSource = [
-      { no: "CA1001", departTime: "08:00", price: 600 },
-      { no: "CA1002", departTime: "09:00", price: 650 },
+      { no: "CA1001", departTime: "08:00", arriveTime: "10:00", price: 600 },
+      { no: "CA1002", departTime: "09:00", arriveTime: "11:00", price: 650 },
     ];
     assertEqual(
       "只保留最新轮次出现的航班",

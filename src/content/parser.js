@@ -16,6 +16,8 @@
   var CANONICAL_ORIGIN = "https://flights.ctrip.com";
   var SEARCH_CRITERIA_MARKER = "GlobalSearchCriteria";
   var MAX_FLIGHTS = 200;
+  var Flight =
+    typeof CtripFlight !== "undefined" && CtripFlight ? CtripFlight : null;
 
   var SELECTORS = {
     list: ".flight-list.root-flights",
@@ -31,10 +33,24 @@
 
   var FLIGHT_NO_RE = /^[A-Z0-9]{2}\d{3,4}$/i;
   var FLIGHT_NO_TOKEN_RE = /[A-Z0-9]{2}\d{3,4}/gi;
+  var AIRLINE_NAME_RE =
+    /(?:中国国航|[一-龥]{2,10}航空|国航|东航|南航|海航|川航|厦航|深航|山航|吉祥|春秋|长龙)/;
   // 只接受 24 小时制合法时间；前置边界避免把 24:30 误匹配成 4:30。
   var TIME_RE = /(?:^|[^\d])((?:[01]?\d|2[0-3]):[0-5]\d)(?!\d)/;
   var CROSS_DAY_RE = /\+\s*(\d+)\s*天/;
   var TRANSFER_RE = /转\s*(\d+)\s*次/;
+
+  var PRICE_MIN = 50;
+  var PRICE_MAX = 50000;
+  var PROMO_CLASS_RE =
+    /coupon|promo|subsid|rebate|cashback|red.?packet|gift|fanxian|hongbao/i;
+  var NON_PRICE_CLASS_RE =
+    /flight-tags|(?:^|[\s_-])tag(?:[\s_-]|$)|book-tooltip|sub-price-detail|sub-price-item|addon|insurance|baggage/i;
+  var STRIKE_CLASS_RE =
+    /origin|original|strike|line-through|old-price|market-price|list-price/i;
+  var PROMO_CONTEXT_RE =
+    /券后|立减|直减|返现|返券|红包|优惠|补贴|到手|折后|会员|专享|满减|返\s*[¥￥]?\s*\d|减\s*[¥￥]?\s*\d|省\s*[¥￥]?\s*\d|机建|燃油|税费|保险|服务费|行李/;
+  var FEE_CONTEXT_RE = /机建|燃油|税费|保险|服务费|行李/;
 
   function readParam(searchParams, name, fallback) {
     var value = searchParams.get(name);
@@ -144,16 +160,134 @@
     return Array.prototype.slice.call(parent.querySelectorAll(selector));
   }
 
+  function descriptor(node) {
+    if (!node) return "";
+    return String(node.className || "") + " " + String(node.id || "");
+  }
+
+  function hasBadAncestor(node, item) {
+    var current = node;
+    while (current && current !== item) {
+      var tag = String(current.nodeName || "").toUpperCase();
+      if (tag === "DEL" || tag === "S") return true;
+
+      var text = descriptor(current);
+      if (
+        PROMO_CLASS_RE.test(text) ||
+        NON_PRICE_CLASS_RE.test(text) ||
+        STRIKE_CLASS_RE.test(text)
+      ) {
+        return true;
+      }
+      current = current.parentElement;
+    }
+    return false;
+  }
+
+  function readAttrPrice(node) {
+    if (!node || typeof node.getAttribute !== "function") return null;
+    var attrs = ["data-price", "data-amount"];
+    for (var i = 0; i < attrs.length; i += 1) {
+      var raw = node.getAttribute(attrs[i]);
+      if (raw === null || raw === "") continue;
+      var value = parseInt(String(raw).replace(/[^\d]/g, ""), 10);
+      if (value >= PRICE_MIN && value <= PRICE_MAX) return value;
+    }
+    return null;
+  }
+
+  function readTextPrices(node, confidence) {
+    var text = textOf(node).trim();
+    if (!text) return [];
+
+    var hasCurrency = /[¥￥]/.test(text);
+    var regex = hasCurrency ? /[¥￥]\s*([0-9][0-9,]*)/g : /[0-9][0-9,]*/g;
+    if (!hasCurrency && confidence < 2) return [];
+
+    var prices = [];
+    var match;
+    while ((match = regex.exec(text)) !== null) {
+      var priceText = hasCurrency ? match[1] : match[0];
+      var value = parseInt(priceText.replace(/,/g, ""), 10);
+      if (!Number.isInteger(value) || value < PRICE_MIN || value > PRICE_MAX) {
+        continue;
+      }
+
+      var start = match.index;
+      var end = match.index + match[0].length;
+      var before = text.slice(Math.max(0, start - 8), start);
+      var after = text.slice(end, end + 4);
+      if (PROMO_CONTEXT_RE.test(before) || FEE_CONTEXT_RE.test(after)) {
+        continue;
+      }
+      // 「返50」「减30」这类紧邻数字的前缀，没有币种时也要否决。
+      if (/(?:返|减|省|满|券)\s*[¥￥]?\s*$/.test(before)) continue;
+
+      prices.push({ price: value, confidence: confidence });
+    }
+    return prices;
+  }
+
+  function collectPriceCandidates(item) {
+    var nodes = queryAll(item, SELECTORS.price);
+    var confidence = 3;
+
+    if (!nodes.length) {
+      nodes = queryAll(
+        item,
+        ".flight-price .price, .flight-price .prc, .flight-price .fare, .flight-price .amount, .flight-price [data-price], .flight-price [data-amount]"
+      );
+      confidence = 2;
+    }
+
+    if (!nodes.length) {
+      var container = item.querySelector(".flight-price");
+      if (container) {
+        nodes = [container];
+        confidence = 1;
+      }
+    }
+
+    var candidates = [];
+    var seenNodes = [];
+    for (var i = 0; i < nodes.length; i += 1) {
+      var node = nodes[i];
+      if (!node || seenNodes.indexOf(node) !== -1) continue;
+      seenNodes.push(node);
+      if (hasBadAncestor(node, item)) continue;
+
+      var attrPrice = readAttrPrice(node);
+      if (attrPrice !== null) {
+        candidates.push({ price: attrPrice, confidence: 4 });
+        continue;
+      }
+
+      var textPrices = readTextPrices(node, confidence);
+      for (var j = 0; j < textPrices.length; j += 1) {
+        candidates.push(textPrices[j]);
+      }
+    }
+    return candidates;
+  }
+
   function readPrice(item) {
-    var node = item.querySelector(SELECTORS.price);
-    if (!node) return null;
+    var candidates = collectPriceCandidates(item);
+    if (!candidates.length) return null;
 
-    // 只取第一个数字串，避免把「¥520 返50」拼成 52050。
-    var match = /\d[\d,]*/.exec(textOf(node));
-    if (!match) return null;
+    var bestConfidence = -1;
+    for (var i = 0; i < candidates.length; i += 1) {
+      if (candidates[i].confidence > bestConfidence) {
+        bestConfidence = candidates[i].confidence;
+      }
+    }
 
-    var price = parseInt(match[0].replace(/,/g, ""), 10);
-    return Number.isInteger(price) && price > 0 ? price : null;
+    var best = null;
+    for (var j = 0; j < candidates.length; j += 1) {
+      var candidate = candidates[j];
+      if (candidate.confidence !== bestConfidence) continue;
+      if (best === null || candidate.price < best.price) best = candidate;
+    }
+    return best ? best.price : null;
   }
 
   function collectFlightNumbers(text, seen, parts) {
@@ -206,9 +340,23 @@
       }
 
       name = name.trim();
+      if (!name) {
+        // 部分卡片的航司名放在子元素里，回退到节点文本并提取航司名称。
+        var match = AIRLINE_NAME_RE.exec(textOf(nodes[i]));
+        name = match ? match[0] : "";
+      }
       if (!name || seen[name]) continue;
       seen[name] = true;
       names.push(name);
+    }
+
+    if (!names.length) {
+      var airlineRoot =
+        item.querySelector(".flight-airline") ||
+        item.querySelector(".airline-item") ||
+        item;
+      var fallback = AIRLINE_NAME_RE.exec(textOf(airlineRoot));
+      if (fallback) names.push(fallback[0]);
     }
 
     return names.join("/");
@@ -261,13 +409,18 @@
     return 0;
   }
 
+  function identityOf(flight) {
+    if (Flight) return Flight.flightIdentity(flight);
+    return flight.no + "|" + flight.departTime + "|" + flight.arriveTime;
+  }
+
   function parseFlights(doc) {
     if (!doc || typeof doc.querySelector !== "function") return [];
 
     var root = doc.querySelector(SELECTORS.list) || doc;
     var items = queryAll(root, SELECTORS.item);
-    var seen = {};
-    var flights = [];
+    var byIdentity = Object.create(null);
+    var order = [];
 
     for (var i = 0; i < items.length; i += 1) {
       var item = items[i];
@@ -284,20 +437,32 @@
       var arriveTime = readArriveTime(item);
       if (!arriveTime) continue;
 
-      var key = no + "|" + departTime;
-      if (seen[key]) continue;
-      seen[key] = true;
-
-      flights.push({
+      var flight = {
         no: no,
         airline: readAirlines(item),
         departTime: departTime,
         arriveTime: arriveTime,
         transfers: readTransfers(item),
         price: price,
-      });
+      };
+      var identity = identityOf(flight);
+      if (!identity) continue;
+
+      var existing = byIdentity[identity];
+      if (existing) {
+        // 同一航班出现多张卡时，保留更低的正式价。
+        if (price < existing.price) byIdentity[identity] = flight;
+        continue;
+      }
+
+      byIdentity[identity] = flight;
+      order.push(identity);
     }
 
+    var flights = [];
+    for (var j = 0; j < order.length; j += 1) {
+      flights.push(byIdentity[order[j]]);
+    }
     flights.sort(compareFlights);
     return flights.slice(0, MAX_FLIGHTS);
   }
@@ -321,7 +486,7 @@
   }
 
   function flightKey(flight) {
-    return flight.no + "|" + flight.departTime + "|" + flight.price;
+    return identityOf(flight) + "|" + flight.price;
   }
 
   function sortedFlightKeys(snapshot) {
@@ -369,7 +534,8 @@
       var list = Array.isArray(sources[s]) ? sources[s] : [];
       for (var i = 0; i < list.length; i += 1) {
         var flight = list[i];
-        var identity = flight.no + "|" + flight.departTime;
+        var identity = identityOf(flight);
+        if (!identity) continue;
         if (!byIdentity[identity]) order.push(identity);
         // 后处理的 next 覆盖 base：价格刷新时保留最新值。
         byIdentity[identity] = flight;
@@ -392,7 +558,7 @@
   }
 
   function flightIdentity(flight) {
-    return flight.no + "|" + flight.departTime;
+    return identityOf(flight);
   }
 
   // 只保留在指定轮次仍然出现在页面里的航班，用于清理已售罄/下架的航班。
@@ -544,6 +710,7 @@
     buildPageContext: buildPageContext,
     parseFlights: parseFlights,
     extractSnapshot: extractSnapshot,
+    flightIdentity: flightIdentity,
     isSameSnapshot: isSameSnapshot,
     shouldUpdate: shouldUpdate,
     mergeSnapshots: mergeSnapshots,

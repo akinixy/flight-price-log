@@ -31,7 +31,8 @@ body {
 
 body {
   width: 380px;
-  max-width: 100vw;
+  min-width: 320px;
+  max-width: 100%;
   font-family: "Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC", sans-serif;
   font-size: 13px;
   line-height: 1.5;
@@ -43,7 +44,7 @@ body {
 #app {
   display: flex;
   flex-direction: column;
-  max-height: min(600px, 100vh);
+  max-height: 600px;
   overflow-y: auto;
   scrollbar-width: thin;
   scrollbar-color: #c9b79f var(--bg);
@@ -366,24 +367,6 @@ body {
   outline-offset: 2px;
 }
 
-.sort-direction {
-  margin-left: 2px;
-  padding: 2px 7px;
-  font-family: inherit;
-  font-size: 10px;
-  line-height: 1.2;
-  color: var(--ink);
-  cursor: pointer;
-  background: transparent;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-}
-
-.sort-direction:hover {
-  color: var(--accent-dark);
-  border-color: var(--border-strong);
-}
-
 .route-toolbar {
   display: flex;
   align-items: center;
@@ -426,6 +409,14 @@ body {
   flex: 1;
   padding: 6px 8px;
   font-size: 11px;
+}
+
+.panel-button {
+  display: block;
+  margin: 0 16px 10px;
+  padding: 7px 10px;
+  text-align: center;
+  text-decoration: none;
 }
 
 .import-input {
@@ -637,14 +628,6 @@ body {
 }
 
 @media (max-width: 379px) {
-  body {
-    width: 100vw;
-  }
-
-  #app {
-    max-height: 100vh;
-  }
-
   .popup-header {
     padding: 12px 12px 10px;
   }
@@ -673,6 +656,11 @@ body {
   .bottom-actions {
     padding-left: 12px;
     padding-right: 12px;
+  }
+
+  .panel-button {
+    margin-left: 12px;
+    margin-right: 12px;
   }
 
   .flight-row {

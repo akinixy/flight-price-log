@@ -220,7 +220,7 @@
   function exportData() {
     var payload = {
       app: "flight-price-log",
-      version: 1,
+      version: 2,
       exportedAt: Date.now(),
       routes: currentRoutes,
     };
@@ -261,6 +261,9 @@
       }
 
       var next = CtripBackup.mergeRoutes(currentRoutes, validated.routes);
+      if (typeof CtripFlight !== "undefined" && CtripFlight) {
+        next = CtripFlight.enforceBudgets(next, Date.now());
+      }
       chrome.storage.local.set({ ctripRoutes: next }).then(
         function () {
           render(next);
@@ -273,6 +276,15 @@
     };
     reader.readAsText(file);
     event.target.value = "";
+  }
+
+  function buildDashboardLink() {
+    var link = el("a", "button panel-button", "打开完整面板");
+    link.setAttribute("href", "../dashboard/dashboard.html");
+    link.setAttribute("target", "_blank");
+    link.setAttribute("rel", "noopener noreferrer");
+    link.setAttribute("data-action", "open-dashboard");
+    return link;
   }
 
   function buildDataActions() {
@@ -381,7 +393,10 @@
     var expanded = false;
     var toggle = null;
     var sortButtons = {};
-    var directionButton = null;
+    var sortLabels = {};
+    SORT_MODES.forEach(function (mode) {
+      sortLabels[mode.key] = mode.label;
+    });
 
     var lowestPrice = null;
     allFlights.forEach(function (flight) {
@@ -454,16 +469,21 @@
     function updateSortUI() {
       Object.keys(sortButtons).forEach(function (key) {
         var active = key === sortMode;
+        var label = sortLabels[key] || key;
+        var arrow = sortDirection === "desc" ? " ↓" : " ↑";
         sortButtons[key].classList.toggle("is-active", active);
         sortButtons[key].setAttribute("aria-pressed", active ? "true" : "false");
-      });
-      if (directionButton) {
-        directionButton.textContent = sortDirection === "desc" ? "↓" : "↑";
-        directionButton.setAttribute(
+        sortButtons[key].textContent = active ? label + arrow : label;
+        sortButtons[key].setAttribute(
           "aria-label",
-          sortDirection === "desc" ? "降序" : "升序"
+          active
+            ? label +
+                (sortDirection === "desc"
+                  ? "，当前降序，点击切换为升序"
+                  : "，当前升序，点击切换为降序")
+            : "按" + label + "排序"
         );
-      }
+      });
     }
 
     function setSort(mode) {
@@ -493,26 +513,17 @@
         );
         if (mode.key === sortMode) button.classList.add("is-active");
         button.addEventListener("click", function () {
-          setSort(mode.key);
+          if (sortMode === mode.key) {
+            toggleDirection();
+          } else {
+            setSort(mode.key);
+          }
         });
         sortButtons[mode.key] = button;
         sortBar.appendChild(button);
       });
 
-      directionButton = el(
-        "button",
-        "sort-direction",
-        sortDirection === "desc" ? "↓" : "↑"
-      );
-      directionButton.type = "button";
-      directionButton.setAttribute("data-action", "sort-direction");
-      directionButton.setAttribute(
-        "aria-label",
-        sortDirection === "desc" ? "降序" : "升序"
-      );
-      directionButton.addEventListener("click", toggleDirection);
-      sortBar.appendChild(directionButton);
-
+      updateSortUI();
       wrap.appendChild(sortBar);
     }
 
@@ -790,6 +801,7 @@
     }
 
     app.appendChild(buildSettings());
+    app.appendChild(buildDashboardLink());
     app.appendChild(buildDataActions());
     if (entries.length !== 0) {
       app.appendChild(buildClearButton());

@@ -20,6 +20,7 @@ test("manifest 声明的脚本和图标文件都存在", () => {
   const files = [];
   files.push(manifest.background.service_worker);
   files.push(manifest.action.default_popup);
+  files.push(manifest.options_ui.page);
   (manifest.content_scripts || []).forEach((entry) => {
     (entry.js || []).forEach((file) => files.push(file));
   });
@@ -31,6 +32,19 @@ test("manifest 声明的脚本和图标文件都存在", () => {
       "缺少文件：" + file
     );
   });
+});
+
+test("仪表盘作为选项页打开且不新增权限", () => {
+  assert.equal(manifest.options_ui.page, "src/dashboard/dashboard.html");
+  assert.equal(manifest.options_ui.open_in_tab, true);
+  assert.deepEqual(manifest.permissions, ["storage"]);
+  assert.equal(manifest.host_permissions, undefined);
+  assert.ok(
+    manifest.content_scripts[0].js.indexOf("src/shared/flight.js") === 0
+  );
+  assert.ok(
+    manifest.content_scripts[0].js.indexOf("src/content/parser.js") === 1
+  );
 });
 
 test("内容脚本只匹配携程单程列表页", () => {
