@@ -9,8 +9,8 @@
 | 版本 | 1.1.0 |
 | 分类 | 效率 / Productivity（商店有「旅行」分类时也可选旅行） |
 | 语言 | 简体中文 |
-| 网站 | https://github.com/akinixy/flight-price-log |
-| 支持 | https://github.com/akinixy/flight-price-log/issues |
+| 网站 | https://akinixy.github.io/flight-price-log/ |
+| 支持 | https://akinixy.github.io/flight-price-log/#support |
 | 隐私政策 | https://akinixy.github.io/flight-price-log/privacy-policy.html |
 | 商店包 | `dist/flight-price-log-1.1.0.zip` |
 
@@ -67,6 +67,8 @@
 | Edge 商店 Logo | `store/logo-300.png` | 300 × 300 |
 | 商店截图（弹窗） | `store/screenshot-1.png` | 1280 × 800 |
 | 商店截图（仪表盘） | `store/dashboard-screenshot-1.png` | 1280 × 800 |
+| 大型促销磁贴 | `store/promo-large-1400x560.png` | 1400 × 560 |
+| 小型促销磁贴 | `store/promo-small-440x280.png` | 440 × 280 |
 | 弹窗原图（合成用） | `store/popup-shot.png` | 380 × 600 |
 
 ## 提交流程
@@ -76,7 +78,7 @@
 1. 用 Microsoft 账号登录 Partner Center，进入 Microsoft Edge 计划。
 2. 新建扩展，上传 `dist/flight-price-log-1.1.0.zip`。
 3. 填写名称、简介、详细描述、分类、语言、支持链接和隐私政策链接。
-4. 上传 300 × 300 Logo 和两张 1280 × 800 截图（弹窗、仪表盘）。
+4. 上传 300 × 300 Logo、两张 1280 × 800 截图（弹窗、仪表盘），以及 1400 × 560 大型促销磁贴；如页面有小型促销磁贴，上传 440 × 280 版本。
 5. 提交审核，通常最多 7 个工作日。
 
 ### 其他商店

@@ -18,6 +18,10 @@ const PAGE_PATH = path.join(ROOT, "store", "screenshot.html");
 const OUT_PATH = path.join(ROOT, "store", "screenshot-1.png");
 const DASHBOARD_PAGE_PATH = path.join(ROOT, "store", "dashboard-preview.html");
 const DASHBOARD_OUT_PATH = path.join(ROOT, "store", "dashboard-screenshot-1.png");
+const PROMO_LARGE_PAGE_PATH = path.join(ROOT, "store", "promo-large.html");
+const PROMO_LARGE_OUT_PATH = path.join(ROOT, "store", "promo-large-1400x560.png");
+const PROMO_SMALL_PAGE_PATH = path.join(ROOT, "store", "promo-small.html");
+const PROMO_SMALL_OUT_PATH = path.join(ROOT, "store", "promo-small-440x280.png");
 
 const BROWSER_CANDIDATES = [
   process.env.EDGE_PATH,
@@ -114,6 +118,20 @@ function main() {
       "[make-store-screenshot] wrote " +
         path.relative(process.cwd(), DASHBOARD_OUT_PATH) +
         " (1280x800)"
+    );
+
+    capture(browser, PROMO_LARGE_PAGE_PATH, PROMO_LARGE_OUT_PATH, 1400, 560);
+    console.log(
+      "[make-store-screenshot] wrote " +
+        path.relative(process.cwd(), PROMO_LARGE_OUT_PATH) +
+        " (1400x560)"
+    );
+
+    capture(browser, PROMO_SMALL_PAGE_PATH, PROMO_SMALL_OUT_PATH, 440, 280);
+    console.log(
+      "[make-store-screenshot] wrote " +
+        path.relative(process.cwd(), PROMO_SMALL_OUT_PATH) +
+        " (440x280)"
     );
   } catch (error) {
     console.error("[make-store-screenshot] " + error.message);
