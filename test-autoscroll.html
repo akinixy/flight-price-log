@@ -49,9 +49,16 @@
   }
 
   // delayMs 模拟携程接口响应时间：滚动触发后要过一会儿才追加下一批。
+  var scrollerCleanup = null;
+
   function buildScroller(options) {
     options = options || {};
     var scroller = document.getElementById("scroller");
+    // 每个用例重建列表；先移除上一个用例的监听，避免旧批次混进新用例。
+    if (scrollerCleanup) {
+      scrollerCleanup();
+      scrollerCleanup = null;
+    }
     scroller.textContent = "";
     scroller.scrollTop = 0;
     var appended = 0;
@@ -73,7 +80,7 @@
 
     appendBatch(batch);
 
-    scroller.addEventListener("scroll", function () {
+    function onScroll() {
       if (!enabled || pending || appended >= total) return;
       var atBottom =
         scroller.scrollTop + scroller.clientHeight >= scroller.scrollHeight - 2;
@@ -86,7 +93,12 @@
       };
       if (delayMs > 0) setTimeout(load, delayMs);
       else load();
-    });
+    }
+
+    scroller.addEventListener("scroll", onScroll);
+    scrollerCleanup = function () {
+      scroller.removeEventListener("scroll", onScroll);
+    };
 
     return scroller;
   }
@@ -243,6 +255,55 @@
       respectUserInput: false,
     });
     assertEqual("达到轮数上限", capped.stopped, "max-rounds");
+
+    step("9d-round-interval");
+    // 9d. 两轮滚动之间保留最小间隔，避免连续触发分批加载。
+    var pacedScroller = buildScroller({ total: 12, batch: 4 });
+    var PACE_MS = 120;
+    var stepTimes = [];
+    var lastRecordedTop = -1;
+    function recordStep() {
+      // 原生 scroll 事件可能紧跟在合成事件之后补发一次，按位置去重，只记滚动步。
+      if (pacedScroller.scrollTop === lastRecordedTop) return;
+      lastRecordedTop = pacedScroller.scrollTop;
+      stepTimes.push(Date.now());
+    }
+    pacedScroller.addEventListener("scroll", recordStep);
+    var pacedOutcome = await CtripAutoScroll.collect({
+      target: pacedScroller,
+      listNode: pacedScroller,
+      count: function () { return itemCount(pacedScroller); },
+      stepTimeoutMs: 120,
+      idleRounds: 2,
+      maxRounds: 20,
+      roundIntervalMs: PACE_MS,
+      respectUserInput: false,
+    });
+    pacedScroller.removeEventListener("scroll", recordStep);
+    var minGap = Infinity;
+    for (var g = 1; g < stepTimes.length; g += 1) {
+      minGap = Math.min(minGap, stepTimes[g] - stepTimes[g - 1]);
+    }
+    assertEqual("放慢后仍采集完整", pacedOutcome.count, 12);
+    assertEqual("每轮都记录到滚动", stepTimes.length >= 4, true);
+    assertEqual("相邻滚动都保留最小间隔", minGap >= PACE_MS * 0.8, true);
+
+    step("9e-budget-cap");
+    // 9e. 间隔等待不会把滚动推过总时长预算。
+    var budgetCapScroller = buildScroller({ total: 400, batch: 4 });
+    var budgetCapped = await CtripAutoScroll.collect({
+      target: budgetCapScroller,
+      listNode: budgetCapScroller,
+      count: function () { return itemCount(budgetCapScroller); },
+      stepTimeoutMs: 20,
+      idleRounds: 10,
+      maxRounds: 20,
+      roundIntervalMs: 200,
+      maxDurationMs: 100,
+      respectUserInput: false,
+    });
+    assertEqual("预算耗尽时不再滚动", budgetCapped.rounds, 1);
+    assertEqual("预算耗尽按超时结束", budgetCapped.stopped, "timeout");
 
     step("10-describe");
     // 9b. 总时长预算生效，正常结束仍恢复滚动位置（用假时钟避免虚拟时间不稳定）。

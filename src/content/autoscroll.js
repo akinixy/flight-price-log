@@ -15,7 +15,15 @@
   var DEFAULT_MAX_DURATION_MS = 45000;
   var DEFAULT_IDLE_ROUNDS = 2;
   var DEFAULT_STEP_RATIO = 0.9;
+  // 两轮滚动之间的最小间隔，用于放慢节奏、减少短时间内触发的分批加载请求。
+  var DEFAULT_ROUND_INTERVAL_MS = 0;
   var USER_EVENTS = ["wheel", "touchstart", "pointerdown", "keydown"];
+
+  function sleep(ms) {
+    return new Promise(function (resolve) {
+      setTimeout(resolve, ms);
+    });
+  }
 
   function isScrollable(node) {
     return !!node && node.scrollHeight > node.clientHeight + 20;
@@ -96,6 +104,8 @@
   }
 
   // 逐步向下滚动，模拟用户翻页；直接跳到最底部时部分懒加载不会触发。
+  // 不伪造 wheel 事件：合成输入的 isTrusted 为 false，容易被页面当成自动化特征，
+  // 而携程列表是按滚动位置触发的，并不依赖 wheel。
   function scrollStep(target, ratio) {
     if (!target) return;
     var step = Math.max(200, Math.round(target.clientHeight * ratio));
@@ -109,27 +119,13 @@
       // 某些容器只读，忽略即可。
     }
 
-    // 部分页面只在 scroll 事件里检查加载条件；直接赋值不一定派发事件。
+    // 部分懒加载只在 scroll 事件里检查加载条件；直接赋值在个别环境下
+    // 不会及时派发事件，这里补发一次，保证分批加载能被触发。
     if (target.scrollTop !== before || typeof Event === "function") {
       try {
         target.dispatchEvent(new Event("scroll"));
       } catch (error) {
         // 派发失败不影响后续轮次。
-      }
-    }
-
-    // 少数懒加载实现监听 wheel；合成事件标记为 synthetic，不触发“用户操作”中断。
-    if (typeof WheelEvent === "function") {
-      try {
-        var wheel = new WheelEvent("wheel", {
-          deltaY: Math.max(1, step),
-          bubbles: true,
-          cancelable: true,
-        });
-        wheel.__synthetic = true;
-        target.dispatchEvent(wheel);
-      } catch (error) {
-        // 忽略不支持 WheelEvent 的环境。
       }
     }
   }
@@ -217,9 +213,7 @@
       return function () {};
     }
 
-    function handler(event) {
-      // 忽略自动滚动自己派发的合成 wheel，避免误判成用户操作。
-      if (event && event.__synthetic) return;
+    function handler() {
       onInterrupt();
     }
 
@@ -266,6 +260,10 @@
     var maxDurationMs = options.maxDurationMs || DEFAULT_MAX_DURATION_MS;
     var idleRounds = options.idleRounds || DEFAULT_IDLE_ROUNDS;
     var stepRatio = options.stepRatio || DEFAULT_STEP_RATIO;
+    var roundIntervalMs =
+      options.roundIntervalMs === undefined
+        ? DEFAULT_ROUND_INTERVAL_MS
+        : options.roundIntervalMs;
     var respectUserInput = options.respectUserInput !== false;
     var now = typeof options.now === "function" ? options.now : Date.now;
     var shouldStop =
@@ -284,6 +282,7 @@
     var idle = 0;
     var userInterrupted = false;
     var lastCount = count();
+    var lastStepAt = 0;
     var result = { rounds: 0, count: lastCount, stopped: "max-rounds" };
 
     function isAborted() {
@@ -320,6 +319,41 @@
         if (now() - startedAt >= maxDurationMs) {
           result = { rounds: rounds, count: lastCount, stopped: "timeout" };
           break;
+        }
+
+        // 放慢节奏：两轮滚动之间至少间隔 roundIntervalMs，避免连续触发分批加载。
+        if (roundIntervalMs > 0) {
+          if (lastStepAt) {
+            var currentTime = now();
+            var budgetLeft = maxDurationMs - (currentTime - startedAt);
+            if (budgetLeft <= 0) {
+              result = { rounds: rounds, count: lastCount, stopped: "timeout" };
+              break;
+            }
+            var waitMs = roundIntervalMs - (currentTime - lastStepAt);
+            // 等待不能超过剩余预算，否则会在截止时间之后仍发出一次滚动。
+            if (waitMs > budgetLeft) waitMs = budgetLeft;
+            if (waitMs > 0) {
+              await sleep(waitMs);
+              if (userInterrupted) {
+                result = {
+                  rounds: rounds,
+                  count: lastCount,
+                  stopped: "user-interrupted",
+                };
+                break;
+              }
+              if (shouldStop()) {
+                result = { rounds: rounds, count: lastCount, stopped: "interrupted" };
+                break;
+              }
+              if (now() - startedAt >= maxDurationMs) {
+                result = { rounds: rounds, count: lastCount, stopped: "timeout" };
+                break;
+              }
+            }
+          }
+          lastStepAt = now();
         }
 
         rounds += 1;

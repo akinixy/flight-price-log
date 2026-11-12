@@ -15,9 +15,14 @@
   var AUTOSCROLL_MAX_DURATION_MS = 30000;
   // 每轮空闲 2 次即结束；若本轮有新增，会从顶部再滚一轮。
   var AUTOSCROLL_IDLE_ROUNDS = 2;
-  var AUTO_MAX_PASSES = 8;
-  var AUTO_TOTAL_BUDGET_MS = 90000;
-  var AUTO_PASS_DELAY_MS = 1200;
+  // 温和采集：每轮滚动之间留出间隔，减少短时间内触发的分批加载请求，
+  // 降低被携程风控（whaleguard）拦截的概率。
+  var AUTOSCROLL_ROUND_INTERVAL_MS = 700;
+  var AUTO_MAX_PASSES = 4;
+  var AUTO_TOTAL_BUDGET_MS = 60000;
+  var AUTO_PASS_DELAY_MS = 2500;
+  // 携程风控拦截页只有一行提示、没有航班列表。
+  var BLOCK_TEXT_RE = /whaleguard/i;
 
   var lastUrl = typeof location !== "undefined" ? location.href : "";
   // 本页面加载时间：后台用它判断快照是否来自删除/清空之前打开的页面。
@@ -47,6 +52,18 @@
     if (loggedReasons[reason]) return;
     loggedReasons[reason] = true;
     console.log(LOG_PREFIX + " " + message);
+  }
+
+  // 识别携程风控拦截页：没有航班列表，整页只有一行 whaleguard block。
+  // 此时继续滚动或重试只会加重拦截，直接停止采集。
+  function isBlockedPage() {
+    if (document.querySelector(".flight-list.root-flights")) return false;
+
+    var body = document.body;
+    if (!body) return false;
+
+    var text = (body.textContent || "").trim();
+    return text.length > 0 && text.length < 400 && BLOCK_TEXT_RE.test(text);
   }
 
   // 内容脚本处于隔离世界，读不到页面 window 变量，只能读取 <script> 文本。
@@ -261,7 +278,13 @@
     if (!window.CtripAutoScroll) return Promise.resolve();
 
     var list = document.querySelector(".flight-list.root-flights");
-    if (!list) return Promise.resolve();
+    if (!list) {
+      if (isBlockedPage()) {
+        autoCollectStopped = true;
+        logOnce("blocked", "页面被携程风控拦截，已停止自动采集；刷新或稍后再试。");
+      }
+      return Promise.resolve();
+    }
 
     if (!autoCollectStartedAt) autoCollectStartedAt = Date.now();
     var remaining = AUTO_TOTAL_BUDGET_MS - (Date.now() - autoCollectStartedAt);
@@ -300,6 +323,7 @@
       maxRounds: AUTOSCROLL_MAX_ROUNDS,
       maxDurationMs: Math.min(AUTOSCROLL_MAX_DURATION_MS, remaining),
       idleRounds: AUTOSCROLL_IDLE_ROUNDS,
+      roundIntervalMs: AUTOSCROLL_ROUND_INTERVAL_MS,
       shouldStop: function () {
         return token !== pageToken || location.href !== lastUrl;
       },
@@ -401,6 +425,10 @@
   function init() {
     if (location.hostname !== HOSTNAME) return;
     if (!location.pathname.startsWith(LIST_PATH_PREFIX)) return;
+    if (isBlockedPage()) {
+      logOnce("blocked", "页面被携程风控拦截，已暂停采集；刷新或稍后再试。");
+      return;
+    }
 
     lastUrl = location.href;
 
