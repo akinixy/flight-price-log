@@ -33,6 +33,10 @@
 
   var ROUTE_A_KEY = "oneway:YIH-CGQ:2026-11-12:y_s_c_f";
   var ROUTE_B_KEY = "oneway:YIH-CGQ:2026-11-13:y_s_c_f";
+  // C 属于另一组（上海 → 北京），最近记录时间早于 A，用来验证分组的先后。
+  var ROUTE_C_KEY = "oneway:SHA-PEK:2026-11-20:y_s_c_f";
+  // D 与 A 同航线同一天但舱位不同，用来验证同一天多记录时标题带上舱位。
+  var ROUTE_D_KEY = "oneway:YIH-CGQ:2026-11-12:y";
 
   // 用真实 epoch 值，保持 A 比 B 新（updatedAt 倒序时 A 在前）。
   var latestTime = new Date(2026, 9, 27, 14, 30).getTime();
@@ -207,8 +211,94 @@
     ]
   };
 
+  store.ctripRoutes[ROUTE_C_KEY] = {
+    key: ROUTE_C_KEY,
+    flightWay: "oneway",
+    originCode: "SHA",
+    originName: "上海",
+    destCode: "PEK",
+    destName: "北京",
+    departDate: "2026-11-20",
+    cabin: "y_s_c_f",
+    currency: "CNY",
+    url: "https://flights.ctrip.com/online/list/oneway-sha-pek?depdate=2026-11-20&cabin=y_s_c_f&adult=1&child=0&infant=0",
+    createdAt: new Date(2026, 9, 23, 8, 0).getTime(),
+    updatedAt: new Date(2026, 9, 24, 10, 0).getTime(),
+    latest: {
+      t: new Date(2026, 9, 24, 10, 0).getTime(),
+      minPrice: 880,
+      minFlightNo: "MU5101",
+      flights: [
+        {
+          no: "MU5101",
+          airline: "东方航空",
+          departTime: "08:00",
+          arriveTime: "10:15",
+          transfers: 0,
+          price: 880
+        }
+      ]
+    },
+    history: [
+      {
+        t: new Date(2026, 9, 24, 10, 0).getTime(),
+        minPrice: 880,
+        minFlightNo: "MU5101"
+      }
+    ]
+  };
+
+  store.ctripRoutes[ROUTE_D_KEY] = {
+    key: ROUTE_D_KEY,
+    flightWay: "oneway",
+    originCode: "YIH",
+    originName: "宜昌",
+    destCode: "CGQ",
+    destName: "长春",
+    departDate: "2026-11-12",
+    cabin: "y",
+    currency: "CNY",
+    url: "https://flights.ctrip.com/online/list/oneway-yih-cgq?depdate=2026-11-12&cabin=y&adult=1&child=0&infant=0",
+    createdAt: new Date(2026, 9, 26, 9, 0).getTime(),
+    updatedAt: new Date(2026, 9, 26, 10, 0).getTime(),
+    latest: {
+      t: new Date(2026, 9, 26, 10, 0).getTime(),
+      minPrice: 505,
+      minFlightNo: "MU2453",
+      flights: [
+        {
+          no: "MU2453",
+          airline: "东方航空",
+          departTime: "08:10",
+          arriveTime: "11:45",
+          transfers: 0,
+          price: 505
+        }
+      ]
+    },
+    history: [
+      {
+        t: new Date(2026, 9, 26, 10, 0).getTime(),
+        minPrice: 505,
+        minFlightNo: "MU2453"
+      }
+    ]
+  };
+
+  // 按 C、B、A、D 的顺序写入，让「插入顺序」与「排序结果」不同，
+  // 这样删掉排序逻辑时断言才会失败。
+  var insertionOrder = [ROUTE_C_KEY, ROUTE_B_KEY, ROUTE_A_KEY, ROUTE_D_KEY];
+  var orderedRoutes = {};
+  insertionOrder.forEach(function (key) {
+    orderedRoutes[key] = store.ctripRoutes[key];
+  });
+  store.ctripRoutes = orderedRoutes;
+
   window.__testStore = store;
   window.__testRouteAKey = ROUTE_A_KEY;
+  window.__testRouteBKey = ROUTE_B_KEY;
+  window.__testRouteCKey = ROUTE_C_KEY;
+  window.__testRouteDKey = ROUTE_D_KEY;
 
   // 在 popup.js 之前定义 mock chrome。
   window.chrome = window.chrome || {};
@@ -280,9 +370,27 @@
     }
 
     try {
-      // 1. 按 updatedAt 倒序渲染 2 张卡片。
+      // 1. 按航线分组渲染：宜昌三条日期在前，上海一条在后。
       var cards = document.querySelectorAll(".route-card");
-      check("卡片数量为 2", cards.length === 2);
+      check("卡片数量为 4", cards.length === 4);
+
+      var groups = document.querySelectorAll(".route-group");
+      check("分组数量为 2", groups.length === 2);
+      check(
+        "第一组为「宜昌 → 长春」",
+        groups.length > 0 &&
+          textOf(groups[0].querySelector(".route-group-title")) === "宜昌 → 长春"
+      );
+      check(
+        "第二组为「上海 → 北京」",
+        groups.length > 1 &&
+          textOf(groups[1].querySelector(".route-group-title")) === "上海 → 北京"
+      );
+      check(
+        "第一组有 3 张日期卡片",
+        groups.length > 0 &&
+          groups[0].querySelectorAll(".route-card").length === 3
+      );
 
       var firstTitle = cards[0]
         ? textOf(cards[0].querySelector(".route-title"))
@@ -290,24 +398,63 @@
       var secondTitle = cards[1]
         ? textOf(cards[1].querySelector(".route-title"))
         : "";
+      var thirdTitle = cards[2]
+        ? textOf(cards[2].querySelector(".route-title"))
+        : "";
+      var fourthTitle = cards[3]
+        ? textOf(cards[3].querySelector(".route-title"))
+        : "";
+      // 标题只放日期，不再重复航线名。
+      check("卡片标题不含航线名", firstTitle.indexOf("→") === -1);
       check(
-        "第一张卡片标题包含「宜昌 → 长春」",
-        firstTitle.indexOf("宜昌 → 长春") !== -1
+        "第一张卡片为「11月12日 · 全部舱位」",
+        firstTitle.indexOf("11月12日") !== -1 &&
+          firstTitle.indexOf("全部舱位") !== -1
       );
       check(
-        "第一张卡片标题包含「11月12日」",
-        firstTitle.indexOf("11月12日") !== -1
+        "第二张卡片为「11月12日 · 经济舱」",
+        secondTitle.indexOf("11月12日") !== -1 &&
+          secondTitle.indexOf("经济舱") !== -1
       );
       check(
-        "第二张卡片标题包含「11月13日」",
-        secondTitle.indexOf("11月13日") !== -1
+        "第三张卡片为「11月13日」且不带舱位",
+        thirdTitle.indexOf("11月13日") !== -1 &&
+          thirdTitle.indexOf("舱位") === -1 &&
+          thirdTitle.indexOf("经济舱") === -1
       );
+      check("第四张卡片为「11月20日」", fourthTitle.indexOf("11月20日") !== -1);
 
-      // 2. 舱位、现价、历史最低、较上次。
+      // 2. 每张卡片标题行右侧有「再查一次」直达链接，各自指向自己的记录。
       var firstCard = cards[0] || null;
+      check("卡片不再显示舱位标签", !document.querySelector(".cabin-tag"));
+
+      var storeRoutes = window.__testStore.ctripRoutes;
+      var expectedUrls = [
+        storeRoutes[window.__testRouteAKey].url,
+        storeRoutes[window.__testRouteDKey].url,
+        storeRoutes[window.__testRouteBKey].url,
+        storeRoutes[window.__testRouteCKey].url
+      ];
+      var requeryLinks = document.querySelectorAll(".route-card .requery-link");
+      check("每张卡片都有再查一次链接", requeryLinks.length === 4);
+      var linksMatch = true;
+      for (var li = 0; li < expectedUrls.length; li += 1) {
+        if (
+          !requeryLinks[li] ||
+          requeryLinks[li].getAttribute("href") !== expectedUrls[li]
+        ) {
+          linksMatch = false;
+        }
+      }
+      check("每张卡片的再查一次指向自己的记录", linksMatch);
       check(
-        "第一张卡片舱位为「全部舱位」",
-        !!firstCard && textOf(firstCard.querySelector(".cabin-tag")) === "全部舱位"
+        "再查一次链接文案",
+        !!requeryLinks[0] && textOf(requeryLinks[0]) === "再查一次"
+      );
+      check(
+        "再查一次在新标签页打开",
+        !!requeryLinks[0] &&
+          requeryLinks[0].getAttribute("target") === "_blank"
       );
       check(
         "第一张卡片当前价格为「¥520」",
@@ -327,12 +474,14 @@
       check("较上次文案包含「较上次」", deltaText.indexOf("较上次") !== -1);
       check("较上次文案包含「+¥40」", deltaText.indexOf("+¥40") !== -1);
 
-      // 第二张卡片只有 1 个历史点，应显示「首次记录」。
-      var secondCard = cards[1] || null;
-      var secondDelta = secondCard
-        ? textOf(secondCard.querySelector(".delta"))
+      // 只有 1 个历史点的记录显示「首次记录」。
+      var singlePointCard = document.querySelector(
+        '.route-card[data-key="' + window.__testRouteBKey + '"]'
+      );
+      var singleDelta = singlePointCard
+        ? textOf(singlePointCard.querySelector(".delta"))
         : "";
-      check("单点记录显示「首次记录」", secondDelta === "首次记录");
+      check("单点记录显示「首次记录」", singleDelta === "首次记录");
 
       // 3. 每张卡片有 sparkline SVG。
       for (var i = 0; i < cards.length; i += 1) {
@@ -355,26 +504,8 @@
         !!headerLink && textOf(headerLink) === "前往携程航班列表"
       );
 
-      // 3c. 航线排序与自动采集开关。
-      var routeSelect = document.querySelector(".route-sort-select");
-      check("存在航线排序选择", !!routeSelect);
-      check("默认按最近更新排序", !!routeSelect && routeSelect.value === "updated");
-      if (routeSelect) {
-        routeSelect.value = "price";
-        routeSelect.dispatchEvent(new Event("change"));
-      }
-      await nextTick();
-      var priceOrderTitle = document.querySelector(".route-title");
-      check(
-        "按最低价排序时航线 B 在前",
-        !!priceOrderTitle && textOf(priceOrderTitle).indexOf("11月13日") !== -1
-      );
-      routeSelect = document.querySelector(".route-sort-select");
-      if (routeSelect) {
-        routeSelect.value = "updated";
-        routeSelect.dispatchEvent(new Event("change"));
-      }
-      await nextTick();
+      // 3c. 航线排序已移除，自动采集开关保留。
+      check("不再提供航线排序", !document.querySelector(".route-sort-select"));
 
       var settingCheckbox = document.querySelector(
         '[data-setting="auto-collect"]'
@@ -415,8 +546,6 @@
       );
 
       // 4. 展开明细。
-      var expectedRouteAUrl =
-        window.__testStore.ctripRoutes[window.__testRouteAKey].url;
       var expand = document.querySelector('[data-action="expand"]');
       check("存在展开按钮", !!expand);
       check("展开按钮初始文案为「展开详情」", !!expand && textOf(expand) === "展开详情");
@@ -560,15 +689,9 @@
             : [];
           check("再次点击收起为 10 行", collapsedRows.length === 10);
         }
-        var ctripLink = details ? details.querySelector(".ctrip-link") : null;
         check(
-          "航线链接指向航线 A",
-          !!ctripLink &&
-            ctripLink.getAttribute("href") === expectedRouteAUrl
-        );
-        check(
-          "航线链接文案为「打开本航线页面」",
-          !!ctripLink && textOf(ctripLink) === "打开本航线页面"
+          "明细里不再重复放航线链接",
+          !!details && !details.querySelector(".ctrip-link")
         );
 
         // 4b. 存储变化重渲染后保持展开与排序。
@@ -621,7 +744,7 @@
         await nextTick();
 
         var remainingCards = document.querySelectorAll(".route-card");
-        check("删除后只剩 1 张卡片", remainingCards.length === 1);
+        check("删除后只剩 3 张卡片", remainingCards.length === 3);
 
         var store = window.__testStore;
         var routeAKey = window.__testRouteAKey;

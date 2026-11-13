@@ -12,21 +12,15 @@
     { key: "duration", label: "用时" },
     { key: "depart", label: "起飞" },
   ];
-  var ROUTE_SORT_MODES = [
-    { key: "updated", label: "最近更新" },
-    { key: "price", label: "当前最低价" },
-    { key: "date", label: "出发日期" },
-  ];
   var EMPTY_TEXT = "打开携程航班列表页后，这里会自动出现价格记录";
   var CTRIP_URL = "https://flights.ctrip.com/";
 
   var app = document.getElementById("app");
   var currentRoutes = {};
 
-  // 弹窗重渲染时保持用户的展开状态和排序选择。
+  // 弹窗重渲染时保持用户的展开状态和航班排序选择。
   var expandedKeys = Object.create(null);
   var flightSortState = Object.create(null);
-  var routeSort = "updated";
   var autoCollectEnabled = true;
 
   var pendingDeleteKey = null;
@@ -87,12 +81,6 @@
       : {};
   }
 
-  function routeTitle(route) {
-    var origin = route.originName || route.originCode || "未知";
-    var dest = route.destName || route.destCode || "未知";
-    return origin + " → " + dest + " · " + formatDateLabel(route.departDate);
-  }
-
   function deltaText(route, latest) {
     var history = getHistory(route);
     if (history.length < 2) return "首次记录";
@@ -134,35 +122,65 @@
       : String(value);
   }
 
-  function routePrice(route) {
-    var latest = getLatest(route);
-    return isFiniteNumber(latest.minPrice) ? latest.minPrice : Infinity;
-  }
+  // 按「出发地/目的地」分组：组内按出发日期从早到晚，组间按组内最近一次
+  // 记录时间。不同航线之间比较价格或日期没有意义，所以不提供航线排序。
+  function buildRouteGroups(routes) {
+    var groups = [];
+    var byKey = Object.create(null);
 
-  function sortRoutes(routes) {
-    var entries = [];
     Object.keys(routes).forEach(function (storageKey) {
       var route = routes[storageKey];
-      if (route && typeof route === "object") {
-        entries.push({ storageKey: storageKey, route: route });
+      if (!route || typeof route !== "object") return;
+
+      var groupKey =
+        String(route.originCode || "") + "-" + String(route.destCode || "");
+      var group = byKey[groupKey];
+      if (!group) {
+        group = {
+          key: groupKey,
+          originName: route.originName || route.originCode || "未知",
+          destName: route.destName || route.destCode || "未知",
+          latestAt: 0,
+          entries: [],
+        };
+        byKey[groupKey] = group;
+        groups.push(group);
       }
+
+      var updatedAt = isFiniteNumber(route.updatedAt) ? route.updatedAt : 0;
+      if (updatedAt > group.latestAt) group.latestAt = updatedAt;
+
+      group.entries.push({ storageKey: storageKey, route: route });
     });
-    entries.sort(function (a, b) {
-      if (routeSort === "price") {
-        var pa = routePrice(a.route);
-        var pb = routePrice(b.route);
-        if (pa !== pb) return pa - pb;
-      } else if (routeSort === "date") {
+
+    groups.forEach(function (group) {
+      group.entries.sort(function (a, b) {
         var da = String(a.route.departDate || "");
         var db = String(b.route.departDate || "");
         if (da !== db) return da < db ? -1 : 1;
-      }
 
-      var aTime = isFiniteNumber(a.route.updatedAt) ? a.route.updatedAt : 0;
-      var bTime = isFiniteNumber(b.route.updatedAt) ? b.route.updatedAt : 0;
-      return bTime - aTime;
+        var ua = isFiniteNumber(a.route.updatedAt) ? a.route.updatedAt : 0;
+        var ub = isFiniteNumber(b.route.updatedAt) ? b.route.updatedAt : 0;
+        return ub - ua;
+      });
+
+      // 同一航线同一天如果存在多条记录（不同舱位），标题带上舱位才区分得开。
+      var countByDate = Object.create(null);
+      group.entries.forEach(function (entry) {
+        var date = String(entry.route.departDate || "");
+        countByDate[date] = (countByDate[date] || 0) + 1;
+      });
+      group.entries.forEach(function (entry) {
+        entry.showCabin =
+          countByDate[String(entry.route.departDate || "")] > 1;
+      });
     });
-    return entries;
+
+    groups.sort(function (a, b) {
+      return b.latestAt - a.latestAt;
+    });
+
+    return groups;
   }
 
   function buildHeader() {
@@ -176,27 +194,6 @@
 
   function buildFooter() {
     return el("footer", "popup-footer", "数据仅保存在本机浏览器");
-  }
-
-  function buildRouteToolbar() {
-    var bar = el("div", "route-toolbar");
-    bar.appendChild(el("span", "route-toolbar-label", "航线排序"));
-
-    var select = el("select", "route-sort-select");
-    select.setAttribute("aria-label", "航线排序");
-    ROUTE_SORT_MODES.forEach(function (mode) {
-      var option = document.createElement("option");
-      option.value = mode.key;
-      option.textContent = mode.label;
-      select.appendChild(option);
-    });
-    select.value = routeSort;
-    select.addEventListener("change", function () {
-      routeSort = select.value;
-      render(currentRoutes);
-    });
-    bar.appendChild(select);
-    return bar;
   }
 
   function buildSettings() {
@@ -333,6 +330,24 @@
     link.setAttribute("href", CTRIP_URL);
     link.setAttribute("target", "_blank");
     link.setAttribute("rel", "noopener noreferrer");
+    return link;
+  }
+
+  // 直达这条记录对应的携程列表页；地址在采集时已保存，含航线、日期和舱位。
+  function buildRequeryLink(route, label) {
+    var url =
+      typeof route.url === "string" && route.url.indexOf(CTRIP_URL) === 0
+        ? route.url
+        : CTRIP_URL;
+    var link = el("a", "requery-link", "再查一次");
+    link.setAttribute("href", url);
+    link.setAttribute("target", "_blank");
+    link.setAttribute("rel", "noopener noreferrer");
+    link.setAttribute("data-action", "requery");
+    link.setAttribute(
+      "aria-label",
+      "再查一次：" + (label || formatDateLabel(route.departDate))
+    );
     return link;
   }
 
@@ -547,36 +562,31 @@
     return wrap;
   }
 
-  function buildDetails(route, latest, detailsId, storageKey, isExpanded) {
+  function buildDetails(latest, detailsId, storageKey, isExpanded) {
     var details = el("div", "details");
     details.id = detailsId;
     details.hidden = !isExpanded;
-
-    var linkRow = el("div", "link-row");
-    var link = el("a", "ctrip-link", "打开本航线页面");
-    link.setAttribute("href", typeof route.url === "string" ? route.url : CTRIP_URL);
-    link.setAttribute("target", "_blank");
-    link.setAttribute("rel", "noopener noreferrer");
-    linkRow.appendChild(link);
-    details.appendChild(linkRow);
 
     details.appendChild(el("div", "details-title", "航班明细"));
     details.appendChild(buildFlightTable(latest, storageKey));
     return details;
   }
 
-  function buildRouteCard(storageKey, route, index) {
+  function buildRouteCard(storageKey, route, index, showCabin) {
     var card = el("article", "route-card");
     if (typeof route.key === "string") card.setAttribute("data-key", route.key);
 
     var latest = getLatest(route);
 
+    var title = formatDateLabel(route.departDate);
+    if (showCabin) {
+      title += " · " + CtripFormat.formatCabin(route.cabin || "");
+    }
+
     var head = el("div", "route-head");
     var titleRow = el("div", "route-title-row");
-    titleRow.appendChild(el("h2", "route-title", routeTitle(route)));
-    titleRow.appendChild(
-      el("span", "cabin-tag", CtripFormat.formatCabin(route.cabin || ""))
-    );
+    titleRow.appendChild(el("h3", "route-title", title));
+    titleRow.appendChild(buildRequeryLink(route, title));
     head.appendChild(titleRow);
 
     var priceRow = el("div", "price-row");
@@ -630,13 +640,7 @@
     actions.appendChild(deleteButton);
     card.appendChild(actions);
 
-    var details = buildDetails(
-      route,
-      latest,
-      detailsId,
-      storageKey,
-      isExpanded
-    );
+    var details = buildDetails(latest, detailsId, storageKey, isExpanded);
     expandButton.addEventListener("click", function () {
       var willShow = details.hidden;
       details.hidden = !willShow;
@@ -783,19 +787,35 @@
     app.textContent = "";
     app.appendChild(buildHeader());
 
-    var entries = sortRoutes(safeRoutes);
+    var groups = buildRouteGroups(safeRoutes);
 
-    if (entries.length === 0) {
+    if (groups.length === 0) {
       app.appendChild(buildEmptyView());
     } else {
-      // 只有一条航线时排序没有意义，不占用顶部空间。
-      if (entries.length > 1) {
-        app.appendChild(buildRouteToolbar());
-      }
-
       var list = el("main", "route-list");
-      entries.forEach(function (entry, index) {
-        list.appendChild(buildRouteCard(entry.storageKey, entry.route, index));
+      var cardIndex = 0;
+      groups.forEach(function (group) {
+        var section = el("section", "route-group");
+        section.setAttribute("data-group", group.key);
+        section.appendChild(
+          el(
+            "h2",
+            "route-group-title",
+            group.originName + " → " + group.destName
+          )
+        );
+        group.entries.forEach(function (entry) {
+          section.appendChild(
+            buildRouteCard(
+              entry.storageKey,
+              entry.route,
+              cardIndex,
+              entry.showCabin
+            )
+          );
+          cardIndex += 1;
+        });
+        list.appendChild(section);
       });
       app.appendChild(list);
     }
@@ -803,7 +823,7 @@
     app.appendChild(buildSettings());
     app.appendChild(buildDashboardLink());
     app.appendChild(buildDataActions());
-    if (entries.length !== 0) {
+    if (groups.length !== 0) {
       app.appendChild(buildClearButton());
     }
 
