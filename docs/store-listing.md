@@ -6,13 +6,13 @@
 | --- | --- |
 | 扩展名称 | 航班价格记录簿 |
 | 英文名 | Flight Price Log |
-| 版本 | 1.1.1 |
+| 版本 | 1.2.0 |
 | 分类 | 效率 / Productivity（商店有「旅行」分类时也可选旅行） |
 | 语言 | 简体中文 |
 | 网站 | https://akinixy.github.io/flight-price-log/ |
 | 支持 | https://akinixy.github.io/flight-price-log/#support |
 | 隐私政策 | https://akinixy.github.io/flight-price-log/privacy-policy.html |
-| 商店包 | `dist/flight-price-log-1.1.1.zip` |
+| 商店包 | `dist/flight-price-log-1.2.0.zip` |
 
 ## 简介（不超过 132 字符）
 
@@ -76,7 +76,7 @@
 ### Microsoft Edge Add-ons
 
 1. 用 Microsoft 账号登录 Partner Center，进入 Microsoft Edge 计划。
-2. 新建扩展，上传 `dist/flight-price-log-1.1.1.zip`。
+2. 新建扩展，上传 `dist/flight-price-log-1.2.0.zip`。
 3. 填写名称、简介、详细描述、分类、语言、支持链接和隐私政策链接。
 4. 上传 300 × 300 Logo、两张 1280 × 800 截图（弹窗、仪表盘），以及 1400 × 560 大型促销磁贴；如页面有小型促销磁贴，上传 440 × 280 版本。
 5. 提交审核，通常最多 7 个工作日。
