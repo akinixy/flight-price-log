@@ -42,6 +42,8 @@ run("Node 单元测试", [
   "test/flight.test.js",
   "test/model.test.js",
   "test/manifest.test.js",
+  "test/background.test.js",
+  "test/ctrip.test.js",
 ]);
 
 [

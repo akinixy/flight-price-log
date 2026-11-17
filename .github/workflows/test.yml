@@ -16,3 +16,6 @@ jobs:
 
       - name: Run all tests
         run: node tools/run-all-tests.js
+
+      - name: Build store package
+        run: node tools/build-package.js

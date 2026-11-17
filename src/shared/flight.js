@@ -453,6 +453,10 @@
         kept.sort(function (a, b) {
           return (b.series.lastSeenAt || 0) - (a.series.lastSeenAt || 0);
         });
+        var discarded = kept.slice(maxSeriesPerRoute);
+        for (var d = 0; d < discarded.length; d += 1) {
+          totalSamples -= discarded[d].series.samples.length;
+        }
         kept = kept.slice(0, maxSeriesPerRoute);
       }
 

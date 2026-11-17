@@ -57,7 +57,9 @@
   }
 
   function dateText(value) {
-    return value ? format.formatDateLabel(value) : "—";
+    return typeof value === "string" && value
+      ? format.formatDateLabel(value)
+      : "—";
   }
 
   function timeText(value) {
@@ -144,12 +146,15 @@
     clear(refs.dateChips);
     if (!group) return;
     group.dates.forEach(function (entry) {
+      var active = entry.date === currentDate;
       var button = el(
         "button",
-        "date-chip" + (entry.date === currentDate ? " is-active" : ""),
+        "date-chip" + (active ? " is-active" : ""),
         dateText(entry.date)
       );
       button.type = "button";
+      button.setAttribute("data-chip-date", entry.date);
+      button.setAttribute("aria-pressed", active ? "true" : "false");
       button.addEventListener("click", function () {
         currentDate = entry.date;
         currentSeriesId = null;
@@ -166,23 +171,40 @@
       return;
     }
 
+    var bestDates = group.dates.filter(function (entry) {
+      return entry.currentPrice !== null && entry.currentPrice === group.currentMin;
+    });
+
     refs.dateHint.textContent =
       group.dates.length > 1
-        ? "共 " + group.dates.length + " 个日期，最低价日期为 " + dateText(group.lowestDate)
+        ? bestDates.length > 1
+          ? "共 " + group.dates.length + " 个日期，最低价并列：" +
+            bestDates
+              .map(function (entry) {
+                return dateText(entry.date);
+              })
+              .join("、")
+          : "共 " + group.dates.length + " 个日期，最低价日期为 " +
+            dateText(group.lowestDate)
         : "只有一个日期，再打开另一个日期后可以对比";
 
     var wrap = el("div", "date-overview");
     group.dates.forEach(function (entry) {
+      var active = entry.date === currentDate;
+      var isBest =
+        entry.currentPrice !== null && entry.currentPrice === group.currentMin;
       var card = el(
         "button",
-        "date-card" + (entry.date === currentDate ? " is-active" : "")
+        "date-card" + (active ? " is-active" : "")
       );
       card.type = "button";
-      if (entry.date === group.lowestDate) card.classList.add("is-best");
+      card.setAttribute("data-card-date", entry.date);
+      card.setAttribute("aria-pressed", active ? "true" : "false");
+      if (isBest) card.classList.add("is-best");
 
       var top = el("div", "date-card-top");
       var title = el("span", "date-card-date", dateText(entry.date));
-      if (entry.date === group.lowestDate) {
+      if (isBest) {
         title.appendChild(el("span", "best-badge", "最低"));
       }
       top.appendChild(title);
@@ -341,6 +363,8 @@
         } else {
           var button = el("button", "matrix-price matrix-price-button", price(value));
           button.type = "button";
+          button.setAttribute("data-price-date", date.date);
+          button.setAttribute("data-price-id", row.identity);
           button.addEventListener("click", function () {
             selectFlight(date.date, row.identity);
           });
@@ -483,6 +507,7 @@
       var controls = el("div", "trend-controls");
       var select = document.createElement("select");
       select.setAttribute("aria-label", "选择航班");
+      select.setAttribute("data-series-select", "");
       var hasDateSeries = seriesList.some(function (entry) {
         return entry.date === currentDate;
       });
@@ -563,7 +588,53 @@
     refs.trendBody.appendChild(buildHistoryTable(points));
   }
 
+  // 每次切换都会重建控件；记住当前焦点，渲染后放回对应的新节点。
+  function cssEscape(value) {
+    if (typeof CSS !== "undefined" && CSS && typeof CSS.escape === "function") {
+      return CSS.escape(value);
+    }
+    return String(value).replace(/["\\]/g, "\\$&");
+  }
+
+  function captureFocus() {
+    var active = document.activeElement;
+    if (!active || !active.getAttribute) return null;
+
+    var chipDate = active.getAttribute("data-chip-date");
+    if (chipDate) return '[data-chip-date="' + cssEscape(chipDate) + '"]';
+
+    var cardDate = active.getAttribute("data-card-date");
+    if (cardDate) return '[data-card-date="' + cssEscape(cardDate) + '"]';
+
+    if (active.hasAttribute("data-series-select")) {
+      return "[data-series-select]";
+    }
+
+    var priceDate = active.getAttribute("data-price-date");
+    var priceId = active.getAttribute("data-price-id");
+    if (priceDate && priceId) {
+      return (
+        '[data-price-date="' +
+        cssEscape(priceDate) +
+        '"][data-price-id="' +
+        cssEscape(priceId) +
+        '"]'
+      );
+    }
+    return null;
+  }
+
+  function restoreFocus(selector) {
+    if (!selector) return;
+    var node = document.querySelector(selector);
+    if (node && typeof node.focus === "function") {
+      // 避免把页面滚回控件所在位置，打断用户正在看的内容。
+      node.focus({ preventScroll: true });
+    }
+  }
+
   function renderGroupViews() {
+    var focusSelector = captureFocus();
     var group = selectedGroup();
     if (!group) {
       clear(refs.dateChips);
@@ -576,6 +647,7 @@
       refs.matrix.appendChild(el("div", "empty-panel", "暂无航班数据"));
       clear(refs.comparison);
       refs.comparison.appendChild(el("div", "empty-panel", "暂无日期数据"));
+      restoreFocus(focusSelector);
       return;
     }
 
@@ -591,6 +663,7 @@
     renderComparison(group);
     renderMatrix(group);
     renderTrend(group);
+    restoreFocus(focusSelector);
   }
 
   function renderAll() {

@@ -56,10 +56,12 @@
 
   // 识别携程风控拦截页：没有航班列表，整页只有一行 whaleguard block。
   // 此时继续滚动或重试只会加重拦截，直接停止采集。
-  function isBlockedPage() {
-    if (document.querySelector(".flight-list.root-flights")) return false;
+  function isBlockedPage(doc) {
+    var scope = doc || (typeof document !== "undefined" ? document : null);
+    if (!scope) return false;
+    if (scope.querySelector(".flight-list.root-flights")) return false;
 
-    var body = document.body;
+    var body = scope.body;
     if (!body) return false;
 
     var text = (body.textContent || "").trim();
@@ -325,7 +327,11 @@
       idleRounds: AUTOSCROLL_IDLE_ROUNDS,
       roundIntervalMs: AUTOSCROLL_ROUND_INTERVAL_MS,
       shouldStop: function () {
-        return token !== pageToken || location.href !== lastUrl;
+        return (
+          token !== pageToken ||
+          location.href !== lastUrl ||
+          !autoCollectEnabled
+        );
       },
       onBatch: function () {
         // 只更新内存，避免每批都写一次存储；后台 30 分钟节流下这些写入本就会互相覆盖。
@@ -403,6 +409,9 @@
     autoCollectPasses = 0;
     autoCollectStartedAt = 0;
     autoCollectStopped = false;
+    // 页内 SPA 切换日期/舱位算一次新的页面会话；否则清空数据后，
+    // 这个标签页里的新查询会被 ctripClearedAt 一直挡住。
+    pageStartedAt = Date.now();
     pageToken += 1;
     evalGeneration = 0;
     seenGeneration = Object.create(null);
@@ -468,5 +477,10 @@
     });
   }
 
-  init();
+  // 浏览器里直接启动；Node 测试环境只导出纯函数，不访问 location / chrome。
+  if (typeof module === "object" && module.exports) {
+    module.exports = { isBlockedPage: isBlockedPage };
+  } else {
+    init();
+  }
 })();

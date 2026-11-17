@@ -217,6 +217,10 @@
     return {
       bestDate: group.lowestDate,
       rows: group.dates.map(function (entry) {
+        var isBest =
+          entry.currentPrice !== null &&
+          bestPrice !== null &&
+          entry.currentPrice === bestPrice;
         return {
           date: entry.date,
           routeKey: entry.routeKey,
@@ -231,7 +235,8 @@
             entry.currentPrice !== null && bestPrice !== null
               ? entry.currentPrice - bestPrice
               : null,
-          isBest: entry.date === group.lowestDate,
+          // 并列最低的日期都标记为最低，避免第二个日期显示「+¥0」。
+          isBest: isBest,
         };
       }),
     };

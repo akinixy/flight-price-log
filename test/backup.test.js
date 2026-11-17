@@ -10,8 +10,32 @@ const KEY = "oneway:YIH-CGQ:2026-11-12:y_s_c_f";
 function makeRoute(updatedAt) {
   return {
     key: KEY,
+    flightWay: "oneway",
+    originCode: "YIH",
+    originName: "宜昌",
+    destCode: "CGQ",
+    destName: "长春",
+    departDate: "2026-11-12",
+    cabin: "y_s_c_f",
+    currency: "CNY",
+    url: "https://flights.ctrip.com/online/list/oneway-yih-cgq?depdate=2026-11-12&cabin=y_s_c_f&adult=1&child=0&infant=0",
+    createdAt: updatedAt,
     updatedAt: updatedAt,
-    latest: { t: updatedAt, minPrice: 520, minFlightNo: "FM9366", flights: [] },
+    latest: {
+      t: updatedAt,
+      minPrice: 520,
+      minFlightNo: "FM9366",
+      flights: [
+        {
+          no: "FM9366",
+          airline: "上海航空",
+          departTime: "20:25",
+          arriveTime: "10:35+1",
+          transfers: 0,
+          price: 520,
+        },
+      ],
+    },
     history: [{ t: updatedAt, minPrice: 520, minFlightNo: "FM9366" }],
   };
 }
@@ -150,4 +174,60 @@ test("mergeRoutes 旧备份不丢当前每班历史", () => {
   const merged = CtripBackup.mergeRoutes(current, imported);
   assert.ok(merged[KEY].flightHistory[id]);
   assert.deepEqual(merged[KEY].flightHistory[id].samples, [[900, 700]]);
+});
+
+test("validateBackup 拒绝航班全部无效的航线", () => {
+  const route = makeRoute(10);
+  route.latest.flights = [null];
+  assert.equal(CtripBackup.validateBackup({ routes: { [KEY]: route } }).ok, false);
+});
+
+test("validateBackup 过滤无效航班并重算最低价", () => {
+  const route = makeRoute(10);
+  route.latest.flights = [
+    null,
+    {
+      no: "MU1",
+      airline: "东方航空",
+      departTime: "08:00",
+      arriveTime: "10:00",
+      transfers: 0,
+      price: 600,
+    },
+    { no: "MU2", price: 500 },
+  ];
+  const result = CtripBackup.validateBackup({ routes: { [KEY]: route } });
+  assert.equal(result.ok, true);
+  const flights = result.routes[KEY].latest.flights;
+  assert.equal(flights.length, 1);
+  assert.equal(flights[0].no, "MU1");
+  assert.equal(result.routes[KEY].latest.minPrice, 600);
+});
+
+test("validateBackup 只保留白名单字段", () => {
+  const route = makeRoute(10);
+  route.padding = "x".repeat(2000);
+  route.latest.extra = "y";
+  const result = CtripBackup.validateBackup({ routes: { [KEY]: route } });
+  assert.equal(result.ok, true);
+  assert.equal(result.routes[KEY].padding, undefined);
+  assert.equal(result.routes[KEY].latest.extra, undefined);
+});
+
+test("validateBackup 用字段重算航线键", () => {
+  const route = makeRoute(10);
+  const result = CtripBackup.validateBackup({ routes: { "wrong:key": route } });
+  assert.equal(result.ok, true);
+  assert.ok(result.routes[KEY]);
+  assert.equal(result.routes["wrong:key"], undefined);
+});
+
+test("validateBackup 拒绝非法日期与非携程地址", () => {
+  const badDate = makeRoute(10);
+  badDate.departDate = "2026/11/12";
+  assert.equal(CtripBackup.validateBackup({ routes: { [KEY]: badDate } }).ok, false);
+
+  const badUrl = makeRoute(10);
+  badUrl.url = "https://evil.example.com/";
+  assert.equal(CtripBackup.validateBackup({ routes: { [KEY]: badUrl } }).ok, false);
 });

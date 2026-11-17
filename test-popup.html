@@ -323,6 +323,40 @@
       }
     }
   };
+
+  // 模拟后台队列：删除、清空、导入都由「后台」执行并返回最新航线。
+  window.chrome.runtime = {
+    sendMessage: async function (message) {
+      if (!message || typeof message.type !== "string") {
+        throw new Error("unsupported message");
+      }
+      if (message.type === "DELETE_ROUTE") {
+        var next = {};
+        Object.keys(store.ctripRoutes || {}).forEach(function (key) {
+          if (key !== message.key) next[key] = store.ctripRoutes[key];
+        });
+        store.ctripRoutes = next;
+        store.ctripDeleted = store.ctripDeleted || {};
+        store.ctripDeleted[message.key] = Date.now();
+        return { ok: true, routes: next };
+      }
+      if (message.type === "CLEAR_ALL") {
+        store.ctripRoutes = {};
+        store.ctripDeleted = {};
+        store.ctripClearedAt = Date.now();
+        return { ok: true };
+      }
+      if (message.type === "IMPORT_ROUTES") {
+        var merged = window.CtripBackup.mergeRoutes(
+          store.ctripRoutes || {},
+          message.routes
+        );
+        store.ctripRoutes = merged;
+        return { ok: true, routes: merged };
+      }
+      throw new Error("unsupported message");
+    }
+  };
   window.__testEmitChange = function (changes) {
     changeListeners.forEach(function (fn) {
       fn(changes, "local");

@@ -2,8 +2,6 @@
   "use strict";
 
   var ROUTES_KEY = "ctripRoutes";
-  var DELETED_KEY = "ctripDeleted";
-  var CLEARED_KEY = "ctripClearedAt";
   var SETTINGS_KEY = "ctripSettings";
   var CONFIRM_RESET_MS = 3000;
   var FLIGHT_LIMIT = 10;
@@ -247,29 +245,56 @@
       try {
         parsed = JSON.parse(String(reader.result));
       } catch (error) {
-        showError(new Error("备份文件不是有效的 JSON"));
+        showNotice("导入失败：备份文件不是有效的 JSON");
         return;
       }
 
       var validated = CtripBackup.validateBackup(parsed);
       if (!validated.ok) {
-        showError(new Error(validated.error));
+        showNotice("导入失败：" + validated.error);
         return;
       }
 
-      var next = CtripBackup.mergeRoutes(currentRoutes, validated.routes);
-      if (typeof CtripFlight !== "undefined" && CtripFlight) {
-        next = CtripFlight.enforceBudgets(next, Date.now());
-      }
-      chrome.storage.local.set({ ctripRoutes: next }).then(
-        function () {
-          render(next);
-        },
-        showError
-      );
+      // 合并交给后台队列执行，避免与快照写入交错覆盖。
+      chrome.runtime
+        .sendMessage({ type: "IMPORT_ROUTES", routes: validated.routes })
+        .then(function (response) {
+          if (!response || response.ok !== true) {
+            throw new Error(
+              response && response.error ? response.error : "导入失败"
+            );
+          }
+          render(response.routes || {});
+          var imported =
+            typeof response.imported === "number"
+              ? response.imported
+              : Object.keys(validated.routes).length;
+          var parts = ["已导入 " + imported + " 条航线"];
+          if (response.dropped) {
+            parts.push(
+              "另有 " + response.dropped + " 条因超过 100 条上限被淘汰"
+            );
+          }
+          if (response.compacted) {
+            parts.push("存储空间不足，已进一步压缩");
+          }
+          if (validated.skipped) {
+            parts.push("跳过 " + validated.skipped + " 条不完整的航线");
+          }
+          if (validated.skippedSeries) {
+            parts.push("跳过 " + validated.skippedSeries + " 条价格序列");
+          }
+          showNotice(parts.join("，"));
+        })
+        .catch(function (error) {
+          showNotice(
+            "导入失败：" +
+              (error && error.message ? error.message : "请稍后重试")
+          );
+        });
     };
     reader.onerror = function () {
-      showError(new Error("读取备份文件失败"));
+      showNotice("读取备份文件失败");
     };
     reader.readAsText(file);
     event.target.value = "";
@@ -320,7 +345,10 @@
       payload[SETTINGS_KEY] = Object.assign({}, current, patch);
       await chrome.storage.local.set(payload);
     } catch (error) {
-      showError(error);
+      showNotice(
+        "设置保存失败：" +
+          (error && error.message ? error.message : "请稍后重试")
+      );
     }
   }
 
@@ -400,7 +428,11 @@
     var list = el("ul", "flight-list");
 
     var allFlights =
-      latest && Array.isArray(latest.flights) ? latest.flights : [];
+      latest && Array.isArray(latest.flights)
+        ? latest.flights.filter(function (flight) {
+            return !!flight && typeof flight === "object";
+          })
+        : [];
     var saved = flightSortState[storageKey] || {};
     var sortMode =
       saved.mode === "duration" || saved.mode === "depart" ? saved.mode : "price";
@@ -710,29 +742,23 @@
   async function confirmDelete(key) {
     resetDeleteConfirm();
 
-    var next = {};
-    Object.keys(currentRoutes).forEach(function (routeKey) {
-      if (routeKey !== key) next[routeKey] = currentRoutes[routeKey];
-    });
-
     try {
-      // 记录删除时间，避免仍打开的携程页面把这条航线重新写回来。
-      var stored = await chrome.storage.local.get(DELETED_KEY);
-      var deleted =
-        stored && stored[DELETED_KEY] ? stored[DELETED_KEY] : {};
-      var nextDeleted = Object.assign({}, deleted);
-      nextDeleted[key] = Date.now();
-
-      var payload = {};
-      payload[ROUTES_KEY] = next;
-      payload[DELETED_KEY] = nextDeleted;
-      await chrome.storage.local.set(payload);
+      // 删除交给后台队列执行，和快照写入串行，避免墓碑被旧快照覆盖。
+      var response = await chrome.runtime.sendMessage({
+        type: "DELETE_ROUTE",
+        key: key,
+      });
+      if (!response || response.ok !== true) {
+        throw new Error(
+          response && response.error ? response.error : "删除失败"
+        );
+      }
+      render(response.routes || {});
     } catch (error) {
-      showError(error);
-      return;
+      showNotice(
+        "删除失败：" + (error && error.message ? error.message : "请稍后重试")
+      );
     }
-
-    render(next);
   }
 
   function handleClearClick(button) {
@@ -753,21 +779,52 @@
     resetClearConfirm();
 
     try {
-      // 清空时间之前的页面快照不再写入，避免已打开的页面把数据带回来。
-      var payload = {};
-      payload[ROUTES_KEY] = {};
-      payload[DELETED_KEY] = {};
-      payload[CLEARED_KEY] = Date.now();
-      await chrome.storage.local.set(payload);
+      // 清空同样走后台队列，保证与正在写入的快照互不覆盖。
+      var response = await chrome.runtime.sendMessage({ type: "CLEAR_ALL" });
+      if (!response || response.ok !== true) {
+        throw new Error(
+          response && response.error ? response.error : "清空失败"
+        );
+      }
+      render({});
     } catch (error) {
-      showError(error);
-      return;
+      showNotice(
+        "清空失败：" + (error && error.message ? error.message : "请稍后重试")
+      );
     }
+  }
 
-    render({});
+  // 重渲染会替换 DOM；记住稳定控件的焦点，渲染后放回去。
+  function captureFocusSelector() {
+    var active = document.activeElement;
+    if (!active || !active.getAttribute) return null;
+
+    var setting = active.getAttribute("data-setting");
+    if (setting) return '[data-setting="' + setting + '"]';
+
+    var action = active.getAttribute("data-action");
+    if (
+      action === "export" ||
+      action === "import" ||
+      action === "import-file" ||
+      action === "clear" ||
+      action === "open-dashboard"
+    ) {
+      return '[data-action="' + action + '"]';
+    }
+    return null;
+  }
+
+  function restoreFocus(selector) {
+    if (!selector) return;
+    var node = app.querySelector(selector);
+    if (node && typeof node.focus === "function") {
+      node.focus({ preventScroll: true });
+    }
   }
 
   function render(routes) {
+    var focusSelector = captureFocusSelector();
     var safeRoutes =
       routes && typeof routes === "object" ? routes : {};
 
@@ -828,6 +885,26 @@
     }
 
     app.appendChild(buildFooter());
+    restoreFocus(focusSelector);
+  }
+
+  // 轻量提示：保留当前界面，只在操作区上方短暂显示一条消息。
+  var noticeTimer = null;
+
+  function showNotice(message) {
+    var current = app.querySelector(".notice");
+    if (current) current.remove();
+
+    var node = el("p", "notice", message);
+    node.setAttribute("role", "status");
+    var anchor = app.querySelector(".data-actions");
+    app.insertBefore(node, anchor || null);
+
+    if (noticeTimer !== null) clearTimeout(noticeTimer);
+    noticeTimer = setTimeout(function () {
+      noticeTimer = null;
+      if (node.parentNode) node.remove();
+    }, 6000);
   }
 
   function showError(error) {
@@ -850,27 +927,36 @@
   }
 
   async function init() {
-    var data = await chrome.storage.local.get(ROUTES_KEY);
-    var settingsData = await chrome.storage.local.get(SETTINGS_KEY);
-    var settings =
-      settingsData && settingsData[SETTINGS_KEY] ? settingsData[SETTINGS_KEY] : {};
-    autoCollectEnabled = settings.autoCollect !== false;
-
-    render(data && data[ROUTES_KEY] ? data[ROUTES_KEY] : {});
+    // 先订阅再读取：读取完成前的存储变化不会丢；初始化完成前收到的新值先记下，
+    // 等设置读完再一次性渲染，避免用默认开关状态覆盖真实设置。
+    var initialized = false;
+    var latestRoutes = null;
+    var settingsFromChange = null;
 
     chrome.storage.onChanged.addListener(function (changes, areaName) {
       if (areaName && areaName !== "local") return;
 
       if (changes && changes[ROUTES_KEY]) {
-        render(changes[ROUTES_KEY].newValue || {});
+        latestRoutes = changes[ROUTES_KEY].newValue || {};
+        if (initialized) render(latestRoutes);
       }
 
       if (changes && changes[SETTINGS_KEY]) {
         var next = changes[SETTINGS_KEY].newValue || {};
+        settingsFromChange = next;
         autoCollectEnabled = next.autoCollect !== false;
-        render(currentRoutes);
+        if (initialized) render(currentRoutes);
       }
     });
+
+    var data = await chrome.storage.local.get([ROUTES_KEY, SETTINGS_KEY]);
+    var settings = settingsFromChange || (data && data[SETTINGS_KEY]) || {};
+    autoCollectEnabled = settings.autoCollect !== false;
+
+    initialized = true;
+    render(
+      latestRoutes || (data && data[ROUTES_KEY] ? data[ROUTES_KEY] : {})
+    );
   }
 
   globalThis.__popupReady = init().catch(showError);

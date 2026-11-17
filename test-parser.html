@@ -125,9 +125,13 @@
     assertEqual("真实脚本舱位", real.context.cabin, "y_s_c_f");
 
     // 场景 2：陈旧脚本（日期与 URL 不一致，中文名回退 DOM）
+    // 把脚本里的城市名改成与 DOM 不同，才能验证名称确实来自 DOM 而不是脚本。
+    var staleScript = CTRIP_FIXTURES.staleScript
+      .replace('"departureCityName":"宜昌"', '"departureCityName":"上海"')
+      .replace('"arrivalCityName":"长春"', '"arrivalCityName":"北京"');
     var stale = CtripParser.buildPageContext({
       url: url,
-      scriptTexts: [CTRIP_FIXTURES.staleScript],
+      scriptTexts: [staleScript],
       doc: doc
     });
     assertEqual("陈旧脚本 ok", stale.ok, true);
@@ -666,7 +670,7 @@
     manyBase.flights = [];
     manyBase.minPrice = 100;
     manyBase.minFlightNo = "CA0001";
-    for (var n = 0; n < 60; n += 1) {
+    for (var n = 0; n < 200; n += 1) {
       manyBase.flights.push({
         no: "CA" + (1000 + n),
         airline: "中国国航",
@@ -680,7 +684,7 @@
     moreCards.flights = [];
     moreCards.minPrice = 50;
     moreCards.minFlightNo = "CA9001";
-    for (var p = 0; p < 5; p += 1) {
+    for (var p = 0; p < 10; p += 1) {
       moreCards.flights.push({
         no: "CA" + (9000 + p),
         airline: "中国国航",
@@ -691,8 +695,13 @@
       });
     }
     var cappedMerge = CtripParser.mergeSnapshots(manyBase, moreCards);
-    assertEqual("累积合并保留 65 条", cappedMerge.flights.length, 65);
+    assertEqual("合并后仍限制在 200 条", cappedMerge.flights.length, 200);
     assertEqual("累积合并保留更便宜的新航班", cappedMerge.flights[0].no, "CA9000");
+    assertEqual(
+      "最贵的旧航班被挤出",
+      cappedMerge.flights.some(function (f) { return f.no === "CA1199"; }),
+      false
+    );
 
     // 场景 17：按最后看到轮次清理过期航班
     var seen = {};

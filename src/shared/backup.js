@@ -20,6 +20,154 @@
         : null;
 
   var MAX_HISTORY = 1000;
+  var MAX_FLIGHTS = 200;
+  var CODE_RE = /^[A-Z]{3}$/;
+  var DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+  var CABIN_RE = /^[a-z0-9_]+$/;
+  var URL_PREFIX = "https://flights.ctrip.com/";
+
+  function isPositiveInt(value) {
+    return typeof value === "number" && Number.isInteger(value) && value > 0;
+  }
+
+  // 只保留白名单字段，避免导入文件里的未知字段占满存储配额。
+  function sanitizeFlights(list) {
+    if (!Array.isArray(list)) return [];
+
+    var result = [];
+    for (var i = 0; i < list.length && result.length < MAX_FLIGHTS; i += 1) {
+      var item = list[i];
+      var clean = flight ? flight.normalizeFlight(item) : null;
+      if (!clean && isPlainObject(item)) {
+        if (
+          typeof item.no === "string" &&
+          item.no &&
+          typeof item.departTime === "string" &&
+          typeof item.arriveTime === "string" &&
+          isPositiveInt(item.price)
+        ) {
+          clean = {
+            no: item.no,
+            airline: typeof item.airline === "string" ? item.airline : "",
+            departTime: item.departTime,
+            arriveTime: item.arriveTime,
+            transfers:
+              Number.isInteger(item.transfers) && item.transfers >= 0
+                ? item.transfers
+                : 0,
+            price: item.price,
+          };
+        }
+      }
+      if (clean) result.push(clean);
+    }
+    return result;
+  }
+
+  function sanitizeRoute(route) {
+    if (!isPlainObject(route)) return null;
+
+    var originCode =
+      typeof route.originCode === "string" ? route.originCode : "";
+    var destCode = typeof route.destCode === "string" ? route.destCode : "";
+    var departDate =
+      typeof route.departDate === "string" ? route.departDate : "";
+    var cabin = typeof route.cabin === "string" ? route.cabin : "";
+
+    if (!CODE_RE.test(originCode) || !CODE_RE.test(destCode)) return null;
+    if (!DATE_RE.test(departDate) || !CABIN_RE.test(cabin)) return null;
+    if (route.currency !== "CNY") return null;
+    if (
+      typeof route.url !== "string" ||
+      route.url.indexOf(URL_PREFIX) !== 0
+    ) {
+      return null;
+    }
+
+    var latest = isPlainObject(route.latest) ? route.latest : null;
+    if (!latest || !isPositiveInt(latest.t)) return null;
+
+    var flights = sanitizeFlights(latest.flights);
+    if (!flights.length) return null;
+
+    var minPrice = Infinity;
+    var minFlightNo = "";
+    for (var i = 0; i < flights.length; i += 1) {
+      if (flights[i].price < minPrice) {
+        minPrice = flights[i].price;
+        minFlightNo = flights[i].no;
+      }
+    }
+
+    var history = [];
+    if (Array.isArray(route.history)) {
+      route.history.forEach(function (point) {
+        if (!isPlainObject(point)) return;
+        if (!isPositiveInt(point.t) || !isPositiveInt(point.minPrice)) return;
+        history.push({
+          t: point.t,
+          minPrice: point.minPrice,
+          minFlightNo:
+            typeof point.minFlightNo === "string" && point.minFlightNo
+              ? point.minFlightNo
+              : minFlightNo,
+        });
+      });
+    }
+    if (!history.length) {
+      history.push({ t: latest.t, minPrice: minPrice, minFlightNo: minFlightNo });
+    }
+
+    var clean = {
+      key:
+        "oneway:" +
+        originCode +
+        "-" +
+        destCode +
+        ":" +
+        departDate +
+        ":" +
+        cabin,
+      flightWay: "oneway",
+      originCode: originCode,
+      originName:
+        typeof route.originName === "string" && route.originName
+          ? route.originName
+          : originCode,
+      destCode: destCode,
+      destName:
+        typeof route.destName === "string" && route.destName
+          ? route.destName
+          : destCode,
+      departDate: departDate,
+      cabin: cabin,
+      currency: "CNY",
+      url: route.url,
+      createdAt:
+        typeof route.createdAt === "number" && isFinite(route.createdAt)
+          ? route.createdAt
+          : latest.t,
+      updatedAt:
+        typeof route.updatedAt === "number" && isFinite(route.updatedAt)
+          ? route.updatedAt
+          : latest.t,
+      latest: {
+        t: latest.t,
+        minPrice: minPrice,
+        minFlightNo: minFlightNo,
+        flights: flights,
+      },
+      history: history,
+    };
+
+    var historyMap = sanitizeFlightHistory(route.flightHistory);
+    clean.flightHistory = historyMap.map;
+    return { route: clean, skippedSeries: historyMap.skipped };
+  }
+
+  function isPlainObject(value) {
+    return !!value && typeof value === "object" && !Array.isArray(value);
+  }
 
   function safeKey(key) {
     return (
@@ -28,10 +176,6 @@
       key !== "constructor" &&
       key !== "prototype"
     );
-  }
-
-  function isPlainObject(value) {
-    return !!value && typeof value === "object" && !Array.isArray(value);
   }
 
   function fail(error) {
@@ -170,18 +314,6 @@
     return { map: result, skipped: skipped };
   }
 
-  function sanitizeRoute(key, route) {
-    if (!safeKey(key) || !isPlainObject(route)) return null;
-    if (!isPlainObject(route.latest) || !Array.isArray(route.history)) {
-      return null;
-    }
-
-    var clean = Object.assign({}, route);
-    var history = sanitizeFlightHistory(route.flightHistory);
-    clean.flightHistory = history.map;
-    return { route: clean, skippedSeries: history.skipped };
-  }
-
   // 校验导出文件的结构，只保留字段完整的航线。
   function validateBackup(data) {
     if (!isPlainObject(data)) {
@@ -201,13 +333,25 @@
     var skipped = 0;
     var skippedSeries = 0;
     Object.keys(data.routes).forEach(function (key) {
-      var sanitized = sanitizeRoute(key, data.routes[key]);
+      if (!safeKey(key)) {
+        skipped += 1;
+        return;
+      }
+      var sanitized = sanitizeRoute(data.routes[key]);
       if (!sanitized) {
         skipped += 1;
         return;
       }
       skippedSeries += sanitized.skippedSeries;
-      routes[key] = sanitized.route;
+      // 用字段重算出的键写入，避免文件里的键与内容不一致。
+      var routeKey = sanitized.route.key;
+      var existing = routes[routeKey];
+      if (
+        !existing ||
+        (sanitized.route.updatedAt || 0) > (existing.updatedAt || 0)
+      ) {
+        routes[routeKey] = sanitized.route;
+      }
     });
 
     if (!Object.keys(routes).length) {

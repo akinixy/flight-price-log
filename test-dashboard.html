@@ -39,6 +39,8 @@
   var KEY_A = "oneway:SHA-PEK:2026-11-18:y_s_c_f";
   var KEY_B = "oneway:SHA-PEK:2026-11-19:y_s_c_f";
   var KEY_C = "oneway:SHA-PEK:2026-11-18:c_f";
+  // D 与 B 同价，用来验证并列最低价的标记。
+  var KEY_D = "oneway:SHA-PEK:2026-11-20:y_s_c_f";
   var store = { ctripRoutes: {} };
 
   function series(no, depart, arrive, samples) {
@@ -87,6 +89,14 @@
     "MU5101|07:00|09:15": series("MU5101", "07:00", "09:15", [[1100, 1680]])
   });
 
+  store.ctripRoutes[KEY_D] = route("2026-11-20", "y_s_c_f", 640, "MU5101", [
+    { no: "MU5101", airline: "东方航空", departTime: "07:00", arriveTime: "09:15", transfers: 0, price: 640 }
+  ], [
+    { t: 1300, minPrice: 640, minFlightNo: "MU5101" }
+  ], {
+    "MU5101|07:00|09:15": series("MU5101", "07:00", "09:15", [[1300, 640]])
+  });
+
   window.__testStore = store;
   window.chrome = window.chrome || {};
   window.chrome.storage = {
@@ -125,10 +135,21 @@
     check("统计卡 6 张", cards.length === 6);
     var groupOptions = document.querySelectorAll("#groupSelect option");
     check("航线组选项 2 个", groupOptions.length === 2);
-    check("日期芯片 2 个", document.querySelectorAll(".date-chip").length === 2);
-    check("日期卡 2 个", document.querySelectorAll(".date-card").length === 2);
-    check("最低价标记存在", !!document.querySelector(".best-badge"));
-    check("日期明细行 2 行", document.querySelectorAll("#comparison tbody tr").length === 2);
+    check("日期芯片 3 个", document.querySelectorAll(".date-chip").length === 3);
+    check("日期卡 3 个", document.querySelectorAll(".date-card").length === 3);
+    check(
+      "并列最低价都带最低标记",
+      document.querySelectorAll(".best-badge").length === 2
+    );
+    check(
+      "日期提示说明并列最低",
+      text(document.getElementById("dateHint")).indexOf("并列") !== -1
+    );
+    check("日期明细行 3 行", document.querySelectorAll("#comparison tbody tr").length === 3);
+    check(
+      "日期明细并列行都标最低",
+      document.querySelectorAll("#comparison tr.is-best-row").length === 2
+    );
     check("矩阵存在", !!document.querySelector(".matrix-table"));
     check("趋势图 SVG 存在", !!document.querySelector(".trend-chart svg"));
     var trendSelect = document.querySelector("#trendBody select");

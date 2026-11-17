@@ -26,6 +26,7 @@ const INDEX = [
   "test-parser.html",
   "test-chart.html",
   "test-popup.html",
+  "test-dashboard.html",
 ];
 
 function listPage() {

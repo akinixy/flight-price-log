@@ -504,7 +504,7 @@ body.dashboard {
 }
 
 .matrix-missing {
-  color: #b8afa2;
+  color: var(--muted);
 }
 
 .data-table tr.is-best-row td {
@@ -626,5 +626,21 @@ body.dashboard {
 
   .trend-stats {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+/* 窄屏下矩阵首列收窄并允许换行，给日期列留出可读空间。 */
+@media (max-width: 640px) {
+  .matrix-table th:first-child,
+  .matrix-table td:first-child {
+    width: 132px;
+    min-width: 132px;
+  }
+
+  .matrix-flight {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 2px;
+    white-space: normal;
   }
 }

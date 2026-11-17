@@ -190,3 +190,70 @@ test("compactRoutes 进一步压缩", () => {
     });
   });
 });
+
+test("enforceBudgets 单航线裁剪不超额删除全局样本", () => {
+  const now = Date.now();
+  const routes = {};
+  ["oneway:YIH-CGQ:2026-11-12:y_s_c_f", "oneway:SHA-PEK:2026-11-20:y_s_c_f"].forEach(
+    (key, r) => {
+      const flightHistory = {};
+      for (let i = 0; i < 250; i += 1) {
+        const samples = [];
+        for (let s = 0; s < 240; s += 1) {
+          samples.push([now - (300 - s) * 1000, 500 + (s % 100)]);
+        }
+        flightHistory["MU" + r + "-" + i + "|08:00|10:00"] = series(
+          "MU" + r + "-" + i,
+          samples[samples.length - 1][0],
+          samples
+        );
+      }
+      routes[key] = {
+        key,
+        updatedAt: now,
+        history: [],
+        flightHistory,
+      };
+    }
+  );
+
+  const result = flight.enforceBudgets(routes, now);
+  let count = 0;
+  let samples = 0;
+  Object.values(result).forEach((route) => {
+    Object.values(route.flightHistory || {}).forEach((item) => {
+      count += 1;
+      samples += item.samples.length;
+    });
+  });
+
+  // 单航线裁到 200、全局裁到 300 后正好是 300 × 240 个样本，不应再被额外裁剪。
+  assert.equal(count, 300);
+  assert.equal(samples, 300 * 240);
+});
+
+test("enforceBudgets 单航线裁剪保留最近出现的序列", () => {
+  const now = Date.now();
+  const flightHistory = {};
+  for (let i = 0; i < 250; i += 1) {
+    const t = now - (250 - i) * 1000;
+    flightHistory["MU" + i + "|08:00|10:00"] = series("MU" + i, t, [[t, 500]]);
+  }
+  const routes = {
+    "oneway:A-B:2026-11-12:y": { updatedAt: now, history: [], flightHistory },
+  };
+
+  const result = flight.enforceBudgets(routes, now, {
+    maxRoutes: 10,
+    maxSeries: 1000,
+    maxSamplesTotal: 1000000,
+    maxSeriesPerRoute: 200,
+  });
+
+  const ids = Object.keys(result["oneway:A-B:2026-11-12:y"].flightHistory);
+  assert.equal(ids.length, 200);
+  assert.equal(ids.indexOf("MU0|08:00|10:00"), -1);
+  assert.equal(ids.indexOf("MU49|08:00|10:00"), -1);
+  assert.ok(ids.indexOf("MU50|08:00|10:00") !== -1);
+  assert.ok(ids.indexOf("MU249|08:00|10:00") !== -1);
+});

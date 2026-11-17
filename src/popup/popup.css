@@ -2,7 +2,7 @@
   color-scheme: light;
   --ink: #101e2b;
   --text: var(--ink);
-  --muted: #7c7568;
+  --muted: #6f6759;
   --border: #ded5c6;
   --border-strong: #c9b79f;
   --accent: #a34d1f;
@@ -565,6 +565,17 @@ body {
   font-size: 13px;
   line-height: 1.7;
   color: var(--muted);
+}
+
+.notice {
+  margin: 0 16px 10px;
+  padding: 8px 10px;
+  font-size: 12px;
+  color: var(--ink);
+  background: #fbf1e3;
+  border: 1px solid #e6cfae;
+  border-radius: 8px;
+  word-break: break-word;
 }
 
 .error-state {

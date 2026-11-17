@@ -130,7 +130,7 @@
     var svg = createSvg(width, height);
     svg.setAttribute("class", "ctrip-line-chart");
 
-    var left = 36;
+    var left = 48;
     var right = 12;
     var top = 16;
     var bottom = 24;

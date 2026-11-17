@@ -139,6 +139,13 @@
       ? sparkPolyline.getAttribute("points").trim().split(/\s+/)
       : [];
     check("Sparkline 只画最后 20 个点", sparkPairs.length === 20);
+    var last20 = CtripChart.buildSparkline(many.slice(-20));
+    check(
+      "Sparkline 保留的是最后 20 个点",
+      !!sparkPolyline &&
+        sparkPolyline.getAttribute("points") ===
+          last20.querySelector("polyline").getAttribute("points")
+    );
 
     // 仅用于截图目检，不参与断言。
     var demo = [

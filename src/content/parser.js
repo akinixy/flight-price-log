@@ -188,9 +188,14 @@
     if (!node || typeof node.getAttribute !== "function") return null;
     var attrs = ["data-price", "data-amount"];
     for (var i = 0; i < attrs.length; i += 1) {
-      var raw = node.getAttribute(attrs[i]);
-      if (raw === null || raw === "") continue;
-      var value = parseInt(String(raw).replace(/[^\d]/g, ""), 10);
+      var raw = String(node.getAttribute(attrs[i]) || "");
+      if (raw === "") continue;
+      // 区间或组合值（如「520-560」）不猜，直接跳过。
+      if (/[-~至]/.test(raw)) continue;
+      // 去掉千分位后按小数解析：520.0 读成 520，而不是把小数点也删掉变成 5200。
+      var match = /(\d+(?:\.\d+)?)/.exec(raw.replace(/,/g, ""));
+      if (!match) continue;
+      var value = Math.round(parseFloat(match[1]));
       if (value >= PRICE_MIN && value <= PRICE_MAX) return value;
     }
     return null;
