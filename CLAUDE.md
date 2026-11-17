@@ -57,6 +57,7 @@ node tools/build-fixtures.js [页面.html]     # 从保存的真实页面裁剪 
 - 浏览器测试页在仓库根目录（`test-autoscroll.html` 等），页面把结果写入 `<div id="result" data-result="pass|fail">`，`tools/run-browser-test.js` 据此判定退出码。
 - 改数据形状、备份格式或 manifest 时，同步更新对应的 `test/*.test.js`；改弹窗结构时同步 `test-popup.html`。
 - 测试数据要能区分「排序生效」和「按插入顺序」：需要时调整夹具写入顺序，避免断言失去区分力。
+- 手动验收：`edge://extensions` 开启开发人员模式 →「加载解压缩的扩展」选择仓库根目录，改代码后点卡片上的「刷新」。
 
 ## 发布流程
 
@@ -65,7 +66,7 @@ node tools/build-fixtures.js [页面.html]     # 从保存的真实页面裁剪 
 3. 提交并推送，打 tag `vX.Y.Z`，`gh release create` 上传 `dist/flight-price-log-X.Y.Z.zip`。
 4. 商店资料：`docs/store-listing.md` 和 `dist/edge-upload/`（含 `partner-center-submission.md`、`listing.txt`、截图与促销磁贴）。`dist/` 被 gitignore，需要本地重建。
 5. 商店要求版本号单调递增，且每个版本的程序包内容应与 tag 和 Release 资产一致。
-6. `docs/` 是 GitHub Pages 产品页与隐私政策（`docs/index.html`、`docs/privacy-policy.html`），改版本号时同步页脚。
+6. `docs/` 是 GitHub Pages 产品页与隐私政策，部署地址 `https://akinixy.github.io/flight-price-log/`（隐私政策 `…/privacy-policy.html`），改版本号时同步页脚；Partner Center 的网站/支持地址以 `partner-center-submission.md` 为准。
 
 ## 仓库约定
 
@@ -73,3 +74,4 @@ node tools/build-fixtures.js [页面.html]     # 从保存的真实页面裁剪 
 - 不使用框架、转译或第三方依赖；代码风格跟随所在文件：内容脚本用 `var`/`function` 的 IIFE，后台与弹窗使用 `const`/`async`。新增依赖或构建步骤需要先讨论。
 - 界面与注释使用中文；价格一律显示人民币。
 - Git 提示 LF→CRLF 是 Windows 下 `core.autocrlf` 的正常现象。
+- 推送若报 `Recv failure: Connection was reset`，先用 `git -c http.version=HTTP/1.1 push` 重试（当前网络下 HTTP/2 到 github.com 会失败）。
