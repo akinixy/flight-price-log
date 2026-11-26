@@ -106,28 +106,89 @@
   // 逐步向下滚动，模拟用户翻页；直接跳到最底部时部分懒加载不会触发。
   // 不伪造 wheel 事件：合成输入的 isTrusted 为 false，容易被页面当成自动化特征，
   // 而携程列表是按滚动位置触发的，并不依赖 wheel。
-  function scrollStep(target, ratio) {
-    if (!target) return;
-    var step = Math.max(200, Math.round(target.clientHeight * ratio));
-    var max = Math.max(0, target.scrollHeight - target.clientHeight);
-    var next = Math.min(max, target.scrollTop + step);
-    var before = target.scrollTop;
-
+  function applyScroll(target, top, notify) {
     try {
-      target.scrollTop = next;
+      target.scrollTop = top;
     } catch (error) {
       // 某些容器只读，忽略即可。
     }
-
-    // 部分懒加载只在 scroll 事件里检查加载条件；直接赋值在个别环境下
-    // 不会及时派发事件，这里补发一次，保证分批加载能被触发。
-    if (target.scrollTop !== before || typeof Event === "function") {
+    if (notify !== false && typeof Event === "function") {
       try {
         target.dispatchEvent(new Event("scroll"));
       } catch (error) {
         // 派发失败不影响后续轮次。
       }
     }
+  }
+
+  // 平滑滚动到目标位置；durationMs 为 0 时立即到位。
+  function animateScroll(target, top, durationMs, isAborted) {
+    var from = target.scrollTop;
+    if (
+      !durationMs ||
+      durationMs <= 0 ||
+      from === top ||
+      typeof requestAnimationFrame !== "function"
+    ) {
+      applyScroll(target, top);
+      return Promise.resolve();
+    }
+
+    return new Promise(function (resolve) {
+      var startedAt = null;
+      var done = false;
+      var fallbackTimer = null;
+
+      function finish() {
+        if (done) return;
+        done = true;
+        if (fallbackTimer !== null) clearTimeout(fallbackTimer);
+        applyScroll(target, top);
+        resolve();
+      }
+
+      function abort() {
+        if (done) return;
+        done = true;
+        if (fallbackTimer !== null) clearTimeout(fallbackTimer);
+        resolve();
+      }
+
+      // 无头/后台页可能不触发 requestAnimationFrame，用定时器兜底。
+      fallbackTimer = setTimeout(finish, durationMs + 100);
+
+      function frame(now) {
+        if (done) return;
+        if (isAborted && isAborted()) {
+          abort();
+          return;
+        }
+        if (startedAt === null) startedAt = now;
+        var progress = Math.min(1, (now - startedAt) / durationMs);
+        var eased =
+          progress < 0.5
+            ? 2 * progress * progress
+            : 1 - Math.pow(-2 * progress + 2, 2) / 2;
+        applyScroll(target, from + (top - from) * eased, false);
+        if (progress < 1) {
+          requestAnimationFrame(frame);
+        } else {
+          finish();
+        }
+      }
+      requestAnimationFrame(frame);
+    });
+  }
+
+  function scrollStep(target, ratio, options) {
+    if (!target) return Promise.resolve();
+    var step = Math.max(200, Math.round(target.clientHeight * ratio));
+    var max = Math.max(0, target.scrollHeight - target.clientHeight);
+    var next = Math.min(max, target.scrollTop + step);
+    var durationMs =
+      options && typeof options.durationMs === "number" ? options.durationMs : 0;
+    var isAborted = options && options.isAborted;
+    return animateScroll(target, next, durationMs, isAborted);
   }
 
   // 事件驱动地等待新内容：列表新增节点或滚动高度变化时立即返回。
@@ -273,6 +334,18 @@
       };
     var onRound = options.onRound || function () {};
     var onBatch = options.onBatch || function () {};
+    var onBottomIdle =
+      typeof options.onBottomIdle === "function" ? options.onBottomIdle : null;
+    var midStepTimeoutMs =
+      typeof options.midStepTimeoutMs === "number"
+        ? options.midStepTimeoutMs
+        : stepTimeoutMs;
+    var stepDurationMs =
+      typeof options.stepDurationMs === "number" ? options.stepDurationMs : 0;
+    var restoreDurationMs =
+      typeof options.restoreDurationMs === "number"
+        ? options.restoreDurationMs
+        : 0;
 
     var originalTops = targets.map(function (t) {
       return t.scrollTop;
@@ -289,15 +362,28 @@
       return userInterrupted || shouldStop();
     }
 
-    function restore() {
+    function restore(durationMs) {
+      var tasks = [];
       for (var i = 0; i < targets.length; i += 1) {
-        try {
-          targets[i].scrollTop = originalTops[i];
-          targets[i].dispatchEvent(new Event("scroll"));
-        } catch (error) {
-          // 忽略只读滚动容器。
+        tasks.push(animateScroll(targets[i], originalTops[i], durationMs, null));
+      }
+      return Promise.all(tasks);
+    }
+
+    // 只有滚到底部才把「本轮没有增长」计为空闲；否则列表较高或
+    // 单批新增较多时，会在一两轮后就误判为没有更多内容。
+    function isAtBottom() {
+      for (var i = 0; i < targets.length; i += 1) {
+        var node = targets[i];
+        if (!node) continue;
+        if (
+          node.scrollHeight > node.clientHeight + 2 &&
+          node.scrollTop + node.clientHeight < node.scrollHeight - 2
+        ) {
+          return false;
         }
       }
+      return true;
     }
 
     var disposeInteraction = respectUserInput
@@ -358,14 +444,22 @@
 
         rounds += 1;
         var baseline = measure();
+        var stepTasks = [];
         for (var s = 0; s < targets.length; s += 1) {
-          scrollStep(targets[s], stepRatio);
+          stepTasks.push(
+            scrollStep(targets[s], stepRatio, {
+              durationMs: stepDurationMs,
+              isAborted: isAborted,
+            })
+          );
         }
+        await Promise.all(stepTasks);
 
+        var atBottomAfterScroll = isAtBottom();
         var outcome = await waitForGrowth({
           measure: measure,
           baseline: baseline,
-          timeoutMs: stepTimeoutMs,
+          timeoutMs: atBottomAfterScroll ? stepTimeoutMs : midStepTimeoutMs,
           listNode: listNode,
           target: target,
           targets: targets,
@@ -388,8 +482,18 @@
           idle = 0;
           lastCount = nowCount;
           await onBatch({ round: rounds, count: nowCount });
+        } else if (isAtBottom()) {
+          var loadMore =
+            onBottomIdle &&
+            onBottomIdle({ round: rounds, count: nowCount }) === true;
+          if (loadMore) {
+            idle = 0;
+          } else {
+            idle += 1;
+          }
         } else {
-          idle += 1;
+          // 还没滚到底，继续下一轮；不计空闲。
+          idle = 0;
         }
 
         onRound({
@@ -417,7 +521,7 @@
 
     // 用户操作或页面导航打断了采集时，滚动条已经被用户/新页面接管，不能再拉回去。
     if (result.stopped !== "user-interrupted" && result.stopped !== "interrupted") {
-      restore();
+      await restore(restoreDurationMs);
     }
     return result;
   }
@@ -428,6 +532,7 @@
     describeTarget: describeTarget,
     scrollStep: scrollStep,
     waitForGrowth: waitForGrowth,
+    watchUserInterruption: watchUserInterruption,
     collect: collect,
   };
 });

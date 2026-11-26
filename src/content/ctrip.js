@@ -8,25 +8,36 @@
   var LOG_PREFIX = "[航班价格记录]";
 
   var DEBOUNCE_MS = 2000;
+  // 页面持续变化时最多等这么久就放行一次解析，避免防抖被无限重置。
+  var DEBOUNCE_MAX_WAIT_MS = 5000;
+  // 首次加载很慢时不要急着提示「没有列表」，宽限一段时间再提示。
+  var NO_FLIGHTS_GRACE_MS = 45000;
   var URL_POLL_MS = 1000;
-  // 单步最长等待；正常情况下由内容变化事件提前结束。
+  // 单步最多等待：中段只等一小会儿，到底部后等下一批（3 秒 × 2 次空闲约 6 秒）。
+  var AUTOSCROLL_MID_STEP_TIMEOUT_MS = 150;
   var AUTOSCROLL_STEP_TIMEOUT_MS = 3000;
-  var AUTOSCROLL_MAX_ROUNDS = 60;
-  var AUTOSCROLL_MAX_DURATION_MS = 30000;
-  // 每轮空闲 2 次即结束；若本轮有新增，会从顶部再滚一轮。
+  var AUTOSCROLL_STEP_DURATION_MS = 250;
+  var AUTOSCROLL_RESTORE_DURATION_MS = 300;
+  var AUTOSCROLL_MAX_ROUNDS = 80;
+  var AUTOSCROLL_MAX_DURATION_MS = 60000;
+  // 每轮空闲 2 次即结束；只有到达底部才计空闲。
   var AUTOSCROLL_IDLE_ROUNDS = 2;
-  // 温和采集：每轮滚动之间留出间隔，减少短时间内触发的分批加载请求，
-  // 降低被携程风控（whaleguard）拦截的概率。
-  var AUTOSCROLL_ROUND_INTERVAL_MS = 700;
-  var AUTO_MAX_PASSES = 4;
+  var AUTOSCROLL_ROUND_INTERVAL_MS = 400;
   var AUTO_TOTAL_BUDGET_MS = 60000;
-  var AUTO_PASS_DELAY_MS = 2500;
+  // 主动滚动结束后继续观察页面；如果列表又增长，补采一轮。
+  var LATE_WATCH_MS = 20000;
+  var LATE_RESUME_MAX_MS = 20000;
   // 携程风控拦截页只有一行提示、没有航班列表。
   var BLOCK_TEXT_RE = /whaleguard/i;
 
   var lastUrl = typeof location !== "undefined" ? location.href : "";
   // 本页面加载时间：后台用它判断快照是否来自删除/清空之前打开的页面。
   var pageStartedAt = Date.now();
+  // 控制台排查提示：不改变采集行为，只帮助区分风控、广告拦截与页面结构变化。
+  var BLOCKED_HINT =
+    "若安装了广告拦截器，可尝试将 flights.ctrip.com 加入白名单；也请检查 VPN/代理出口与登录状态。";
+  var NO_FLIGHTS_HINT =
+    "未找到航班列表：如果页面已加载完成，可能是该航线/日期暂无航班、广告拦截器隐藏了列表，或携程页面结构已变化；扩展会继续观察。";
   // 页面停留期间已经见过的航班；滚动分批渲染时只增不减。
   var accumulated = null;
   // 最近一次成功保存的快照，用于判断是否有新数据。
@@ -34,11 +45,17 @@
   var scriptTexts = null;
   var observer = null;
   var debounceTimer = null;
+  var debounceStartedAt = 0;
+  var noFlightsTimer = null;
   var urlTimer = null;
   var autoscrollRunning = false;
-  var autoCollectPasses = 0;
-  var autoCollectStartedAt = 0;
+  var autoCollectStarted = false;
   var autoCollectStopped = false;
+  var autoCollectStartedAt = 0;
+  var lateWatchTimer = null;
+  var lateWatchDispose = null;
+  var lateWatchBaseline = 0;
+  var lateResumeUsed = false;
   var autoCollectEnabled = true;
   var pageToken = 0;
   // 记录每个航班最后一次出现在页面里的轮次，用于清理已售罄/下架的航班。
@@ -117,15 +134,42 @@
       clearTimeout(debounceTimer);
       debounceTimer = null;
     }
+    debounceStartedAt = 0;
   }
 
-  // 每次 DOM 变化都重置 2 秒防抖，等页面渲染稳定后再解析。
+  function clearNoFlightsTimer() {
+    if (noFlightsTimer !== null) {
+      clearTimeout(noFlightsTimer);
+      noFlightsTimer = null;
+    }
+  }
+
+  function startNoFlightsTimer() {
+    clearNoFlightsTimer();
+    noFlightsTimer = setTimeout(function () {
+      noFlightsTimer = null;
+      if (!accumulated && !isBlockedPage()) {
+        logOnce("no-flights", NO_FLIGHTS_HINT);
+      }
+    }, NO_FLIGHTS_GRACE_MS);
+  }
+
+  // 每次 DOM 变化都重置 2 秒防抖，等页面渲染稳定后再解析；
+  // 但页面持续变化时最多等 5 秒就放行一次，避免解析被无限推迟。
   function scheduleEvaluate() {
     if (!observer) return;
 
-    if (debounceTimer !== null) clearTimeout(debounceTimer);
+    var now = Date.now();
+    if (debounceTimer === null) {
+      debounceStartedAt = now;
+    } else if (now - debounceStartedAt >= DEBOUNCE_MAX_WAIT_MS) {
+      return;
+    } else {
+      clearTimeout(debounceTimer);
+    }
     debounceTimer = setTimeout(function () {
       debounceTimer = null;
+      debounceStartedAt = 0;
       evaluate()
         .catch(function () {})
         .then(function () {
@@ -133,7 +177,7 @@
           if (
             autoCollectEnabled &&
             lastSaved &&
-            autoCollectPasses === 0 &&
+            !autoCollectStarted &&
             !autoCollectStopped
           ) {
             return autoCollectAll();
@@ -165,7 +209,18 @@
       return false;
     }
 
-    if (!result || !result.ok) return false;
+    if (!result || !result.ok) {
+      var reason = result && result.reason ? String(result.reason) : "parse-error";
+      if (reason !== "no-flights") {
+        logOnce(
+          "parse:" + reason,
+          "当前页面不在采集范围内（" + reason + "），已跳过。"
+        );
+      }
+      return false;
+    }
+
+    clearNoFlightsTimer();
 
     evalGeneration += 1;
     var incoming = result.snapshot.flights || [];
@@ -235,13 +290,57 @@
   function evaluate() {
     var changed = mergeCurrent();
     if (!changed) return Promise.resolve();
+    checkLateWatchGrowth();
     return flush();
   }
 
-  function wait(ms) {
-    return new Promise(function (resolve) {
-      setTimeout(resolve, ms);
+  function clearLateWatch() {
+    if (lateWatchTimer !== null) {
+      clearTimeout(lateWatchTimer);
+      lateWatchTimer = null;
+    }
+    if (lateWatchDispose) {
+      lateWatchDispose();
+      lateWatchDispose = null;
+    }
+  }
+
+  // 主动滚动停止后，页面可能还在慢慢加载；保留一个非阻塞观察窗。
+  function startLateWatch(token) {
+    clearLateWatch();
+    var list = document.querySelector(".flight-list.root-flights");
+    if (!list) return;
+
+    lateWatchBaseline =
+      list.scrollHeight + list.querySelectorAll(".flight-item").length;
+    lateWatchTimer = setTimeout(function () {
+      clearLateWatch();
+      autoCollectStopped = true;
+    }, LATE_WATCH_MS);
+    lateWatchDispose = CtripAutoScroll.watchUserInterruption(function () {
+      clearLateWatch();
+      autoCollectStopped = true;
     });
+    console.log(LOG_PREFIX + " 自动采集结束，继续观察延迟加载 " + LATE_WATCH_MS / 1000 + " 秒。");
+  }
+
+  function checkLateWatchGrowth() {
+    if (lateWatchTimer === null) return;
+    var list = document.querySelector(".flight-list.root-flights");
+    if (!list) return;
+
+    var value =
+      list.scrollHeight + list.querySelectorAll(".flight-item").length;
+    if (value <= lateWatchBaseline) return;
+
+    clearLateWatch();
+    if (lateResumeUsed) {
+      autoCollectStopped = true;
+      return;
+    }
+    lateResumeUsed = true;
+    console.log(LOG_PREFIX + " 检测到延迟加载，补采一轮。");
+    autoCollectAll(true);
   }
 
   // 尝试点击“查看更多/加载更多”一类按钮；找不到就返回 false。
@@ -272,18 +371,23 @@
     return false;
   }
 
-  // 主动滚动列表，触发携程的分批渲染；一轮没滚完时从顶部再来一轮。
-  function autoCollectAll() {
+  // 连续滚动列表，触发携程的分批渲染；到底部后等待新批次，只采集一遍。
+  function autoCollectAll(resume) {
+    var isResume = resume === true;
     if (!autoCollectEnabled) return Promise.resolve();
-    if (autoscrollRunning || autoCollectStopped) return Promise.resolve();
-    if (autoCollectPasses >= AUTO_MAX_PASSES) return Promise.resolve();
+    if (autoscrollRunning) return Promise.resolve();
+    if (!isResume && (autoCollectStopped || autoCollectStarted)) {
+      return Promise.resolve();
+    }
     if (!window.CtripAutoScroll) return Promise.resolve();
 
     var list = document.querySelector(".flight-list.root-flights");
     if (!list) {
       if (isBlockedPage()) {
         autoCollectStopped = true;
-        logOnce("blocked", "页面被携程风控拦截，已停止自动采集；刷新或稍后再试。");
+        logOnce("blocked", "页面被携程风控拦截，已停止自动采集；" + BLOCKED_HINT);
+      } else {
+        logOnce("no-flights", NO_FLIGHTS_HINT);
       }
       return Promise.resolve();
     }
@@ -295,17 +399,16 @@
       return Promise.resolve();
     }
 
+    autoCollectStarted = true;
+    autoCollectStopped = false;
     autoscrollRunning = true;
-    autoCollectPasses += 1;
-    var pass = autoCollectPasses;
-    var startCount = accumulated ? accumulated.flights.length : 0;
     var token = pageToken;
+    var loadMoreClicked = false;
+    var startCount = accumulated ? accumulated.flights.length : 0;
     var targets = CtripAutoScroll.findScrollTargets(list);
     console.log(
       LOG_PREFIX +
-        " 第 " +
-        pass +
-        " 轮自动采集开始，容器：" +
+        (isResume ? " 延迟补采开始，容器：" : " 自动采集开始，容器：") +
         targets
           .map(function (target) {
             return CtripAutoScroll.describeTarget(target);
@@ -322,8 +425,13 @@
           .length;
       },
       stepTimeoutMs: AUTOSCROLL_STEP_TIMEOUT_MS,
+      midStepTimeoutMs: AUTOSCROLL_MID_STEP_TIMEOUT_MS,
+      stepDurationMs: AUTOSCROLL_STEP_DURATION_MS,
+      restoreDurationMs: AUTOSCROLL_RESTORE_DURATION_MS,
       maxRounds: AUTOSCROLL_MAX_ROUNDS,
-      maxDurationMs: Math.min(AUTOSCROLL_MAX_DURATION_MS, remaining),
+      maxDurationMs: isResume
+        ? Math.min(LATE_RESUME_MAX_MS, remaining)
+        : Math.min(AUTOSCROLL_MAX_DURATION_MS, remaining),
       idleRounds: AUTOSCROLL_IDLE_ROUNDS,
       roundIntervalMs: AUTOSCROLL_ROUND_INTERVAL_MS,
       shouldStop: function () {
@@ -341,62 +449,70 @@
           );
         }
       },
+      onBottomIdle: function () {
+        if (loadMoreClicked) return false;
+        loadMoreClicked = tryLoadMore();
+        return loadMoreClicked;
+      },
     })
       .then(function (summary) {
         autoscrollRunning = false;
         if (token !== pageToken) return null;
 
-        // 让最后一轮 DOM 进入累积并标记 seen。
         mergeCurrent();
         var endCount = accumulated ? accumulated.flights.length : 0;
-        var grew = endCount > startCount;
         console.log(
           LOG_PREFIX +
-            " 第 " +
-            pass +
-            " 轮结束：" +
+            " 自动采集结束：" +
             JSON.stringify(summary) +
-            "，本轮新增 " +
+            "，本次新增 " +
             (endCount - startCount) +
             " 条，累计 " +
             endCount +
             " 条"
         );
 
-        return flush().then(function () {
-          if (
-            summary.stopped === "user-interrupted" ||
-            summary.stopped === "interrupted"
-          ) {
+        return flush()
+          .then(function () {
+            if (
+              summary.stopped === "user-interrupted" ||
+              summary.stopped === "interrupted"
+            ) {
+              autoCollectStopped = true;
+              clearLateWatch();
+              return null;
+            }
+
+            if (summary.stopped === "idle") {
+              var pruned = pruneStaleFlights();
+              if (pruned) {
+                console.log(
+                  LOG_PREFIX + " 清理 " + pruned + " 条已不在页面的航班"
+                );
+                return flush();
+              }
+            }
+            return null;
+          })
+          .then(function () {
+            if (
+              summary.stopped === "user-interrupted" ||
+              summary.stopped === "interrupted"
+            ) {
+              return null;
+            }
+            if (!isResume && summary.stopped === "idle") {
+              startLateWatch(token);
+              return null;
+            }
             autoCollectStopped = true;
             return null;
-          }
-
-          // 本轮有新增但已到空闲：从顶部再滚一轮，触发需要重新进入视口的懒加载。
-          if (summary.stopped === "idle" && grew && pass < AUTO_MAX_PASSES) {
-            tryLoadMore();
-            return wait(AUTO_PASS_DELAY_MS).then(function () {
-              if (token !== pageToken) return null;
-              return autoCollectAll();
-            });
-          }
-
-          if (summary.stopped === "idle") {
-            var pruned = pruneStaleFlights();
-            if (pruned) {
-              console.log(
-                LOG_PREFIX + " 清理 " + pruned + " 条已不在页面的航班"
-              );
-              return flush();
-            }
-          }
-
-          autoCollectStopped = true;
-          return null;
-        });
+          });
       })
       .catch(function (error) {
         autoscrollRunning = false;
+        autoCollectStopped = true;
+        clearLateWatch();
         console.log(LOG_PREFIX + " 自动滚动采集中断：" + String(error));
         return flush();
       });
@@ -406,9 +522,11 @@
     accumulated = null;
     lastSaved = null;
     scriptTexts = null;
-    autoCollectPasses = 0;
-    autoCollectStartedAt = 0;
+    clearLateWatch();
+    autoCollectStarted = false;
     autoCollectStopped = false;
+    autoCollectStartedAt = 0;
+    lateResumeUsed = false;
     // 页内 SPA 切换日期/舱位算一次新的页面会话；否则清空数据后，
     // 这个标签页里的新查询会被 ctripClearedAt 一直挡住。
     pageStartedAt = Date.now();
@@ -418,6 +536,7 @@
     maxDomItems = 0;
     stopObservation();
     startObservation();
+    startNoFlightsTimer();
   }
 
   // SPA 切换日期/舱位时 URL 会变，重新开始一轮采集；轮询本身始终保留。
@@ -435,7 +554,7 @@
     if (location.hostname !== HOSTNAME) return;
     if (!location.pathname.startsWith(LIST_PATH_PREFIX)) return;
     if (isBlockedPage()) {
-      logOnce("blocked", "页面被携程风控拦截，已暂停采集；刷新或稍后再试。");
+      logOnce("blocked", "页面被携程风控拦截，已暂停采集；" + BLOCKED_HINT + "刷新或稍后再试。");
       return;
     }
 
@@ -444,6 +563,7 @@
     function start() {
       startObservation();
       watchUrl();
+      startNoFlightsTimer();
     }
 
     try {
@@ -466,13 +586,13 @@
 
       var settings = changes[SETTINGS_KEY].newValue || {};
       autoCollectEnabled = settings.autoCollect !== false;
-      if (
-        autoCollectEnabled &&
-        lastSaved &&
-        autoCollectPasses === 0 &&
-        !autoCollectStopped
-      ) {
-        autoCollectAll();
+      if (autoCollectEnabled) {
+        if (lastSaved && !autoCollectStarted && !autoCollectStopped) {
+          autoCollectAll();
+        }
+      } else {
+        clearLateWatch();
+        autoCollectStopped = true;
       }
     });
   }

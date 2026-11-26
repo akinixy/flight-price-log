@@ -78,7 +78,7 @@
       }
     }
 
-    appendBatch(batch);
+    appendBatch(options.initial === undefined ? batch : options.initial);
 
     function onScroll() {
       if (!enabled || pending || appended >= total) return;
@@ -129,6 +129,38 @@
     assertEqual("采集到全部条目", outcome.count, 16);
     assertEqual("因空闲结束", outcome.stopped, "idle");
     assertEqual("结束时恢复滚动位置", scroller.scrollTop, 0);
+
+    step("2b-tall-initial");
+    // 2b. 初始列表高于两轮滚动距离时，也必须继续滚到底再触发懒加载。
+    var tallScroller = buildScroller({ total: 16, batch: 4, initial: 12 });
+    var tallOutcome = await CtripAutoScroll.collect({
+      target: tallScroller,
+      listNode: tallScroller,
+      count: function () { return itemCount(tallScroller); },
+      stepTimeoutMs: 100,
+      idleRounds: 2,
+      maxRounds: 40,
+      respectUserInput: false,
+    });
+    assertEqual("初始高列表采全", tallOutcome.count, 16);
+    assertEqual("初始高列表因空闲结束", tallOutcome.stopped, "idle");
+    assertEqual("初始高列表恢复滚动位置", tallScroller.scrollTop, 0);
+
+    step("2c-large-batch");
+    // 2c. 单批新增高度超过两轮滚动距离时，也要继续滚到新底部。
+    var bigBatchScroller = buildScroller({ total: 20, batch: 12, initial: 4 });
+    var bigBatchOutcome = await CtripAutoScroll.collect({
+      target: bigBatchScroller,
+      listNode: bigBatchScroller,
+      count: function () { return itemCount(bigBatchScroller); },
+      stepTimeoutMs: 100,
+      idleRounds: 2,
+      maxRounds: 40,
+      respectUserInput: false,
+    });
+    assertEqual("大批次采全", bigBatchOutcome.count, 20);
+    assertEqual("大批次因空闲结束", bigBatchOutcome.stopped, "idle");
+    assertEqual("大批次恢复滚动位置", bigBatchScroller.scrollTop, 0);
 
     step("3-slow");
     // 3. 接口响应慢于单个事件时也要等到，不能误判为没有更多。
@@ -369,6 +401,70 @@
     var described = CtripAutoScroll.describeTarget(scroller);
     assertEqual("描述包含标签名", described.indexOf("div") === 0, true);
     assertEqual("描述包含 id", described.indexOf("#scroller") >= 0, true);
+
+    step("12-mid-step-timeout");
+    // 12. 列表还没到底时不要每步都等 3 秒，应该快速经过中段。
+    var tallStartedAt = Date.now();
+    var tallScroller = buildScroller({ total: 20, batch: 20, enabled: false });
+    var tallOutcome = await CtripAutoScroll.collect({
+      target: tallScroller,
+      listNode: tallScroller,
+      count: function () { return itemCount(tallScroller); },
+      stepTimeoutMs: 300,
+      midStepTimeoutMs: 20,
+      idleRounds: 2,
+      maxRounds: 30,
+      respectUserInput: false,
+    });
+    assertEqual("高列表仍采全", tallOutcome.count, 20);
+    assertEqual("高列表正常结束", tallOutcome.stopped, "idle");
+    assertEqual(
+      "中段不逐轮等待超时",
+      Date.now() - tallStartedAt < 1500,
+      true
+    );
+
+    step("13-bottom-idle");
+    // 13. 到底后由页面决定是否还有更多；回调点击一次后继续采集。
+    var bottomScroller = buildScroller({ total: 4, batch: 4, enabled: false });
+    var loadMoreCalls = 0;
+    var bottomOutcome = await CtripAutoScroll.collect({
+      target: bottomScroller,
+      listNode: bottomScroller,
+      count: function () { return itemCount(bottomScroller); },
+      stepTimeoutMs: 80,
+      idleRounds: 2,
+      maxRounds: 30,
+      respectUserInput: false,
+      onBottomIdle: function () {
+        if (loadMoreCalls > 0) return false;
+        loadMoreCalls += 1;
+        for (var i = 0; i < 4; i += 1) {
+          var item = document.createElement("div");
+          item.className = "item";
+          bottomScroller.appendChild(item);
+        }
+        return true;
+      },
+    });
+    assertEqual("底部只点击一次加载更多", loadMoreCalls, 1);
+    assertEqual("加载更多后继续采集", bottomOutcome.count, 8);
+    assertEqual("加载更多后正常结束", bottomOutcome.stopped, "idle");
+
+    step("14-smooth-step");
+    // 14. 滚动步进返回 Promise，动画结束后到达目标位置。
+    var smoothScroller = buildScroller({ total: 20, batch: 20, enabled: false });
+    var smoothBefore = smoothScroller.scrollTop;
+    var stepPromise = CtripAutoScroll.scrollStep(smoothScroller, 0.9, {
+      durationMs: 50,
+    });
+    assertEqual(
+      "scrollStep 返回 Promise",
+      !!stepPromise && typeof stepPromise.then === "function",
+      true
+    );
+    await stepPromise;
+    assertEqual("平滑滚动到达目标", smoothScroller.scrollTop > smoothBefore, true);
   }
 
   run()
