@@ -13,16 +13,13 @@
   // 首次加载很慢时不要急着提示「没有列表」，宽限一段时间再提示。
   var NO_FLIGHTS_GRACE_MS = 45000;
   var URL_POLL_MS = 1000;
-  // 单步最多等待：中段只等一小会儿，到底部后等下一批（3 秒 × 2 次空闲约 6 秒）。
-  var AUTOSCROLL_MID_STEP_TIMEOUT_MS = 150;
+  // 连续滚动：中段不停顿，只在到达底部后等待新批次（3 秒 × 2 次空闲约 6 秒）。
   var AUTOSCROLL_STEP_TIMEOUT_MS = 3000;
-  var AUTOSCROLL_STEP_DURATION_MS = 250;
   var AUTOSCROLL_RESTORE_DURATION_MS = 300;
   var AUTOSCROLL_MAX_ROUNDS = 80;
   var AUTOSCROLL_MAX_DURATION_MS = 60000;
-  // 每轮空闲 2 次即结束；只有到达底部才计空闲。
+  // 到底后连续 2 次没有新批次即结束；滚动途中不计空闲。
   var AUTOSCROLL_IDLE_ROUNDS = 2;
-  var AUTOSCROLL_ROUND_INTERVAL_MS = 400;
   var AUTO_TOTAL_BUDGET_MS = 60000;
   // 主动滚动结束后继续观察页面；如果列表又增长，补采一轮。
   var LATE_WATCH_MS = 20000;
@@ -425,21 +422,26 @@
           .length;
       },
       stepTimeoutMs: AUTOSCROLL_STEP_TIMEOUT_MS,
-      midStepTimeoutMs: AUTOSCROLL_MID_STEP_TIMEOUT_MS,
-      stepDurationMs: AUTOSCROLL_STEP_DURATION_MS,
       restoreDurationMs: AUTOSCROLL_RESTORE_DURATION_MS,
       maxRounds: AUTOSCROLL_MAX_ROUNDS,
       maxDurationMs: isResume
         ? Math.min(LATE_RESUME_MAX_MS, remaining)
         : Math.min(AUTOSCROLL_MAX_DURATION_MS, remaining),
       idleRounds: AUTOSCROLL_IDLE_ROUNDS,
-      roundIntervalMs: AUTOSCROLL_ROUND_INTERVAL_MS,
       shouldStop: function () {
         return (
           token !== pageToken ||
           location.href !== lastUrl ||
           !autoCollectEnabled
         );
+      },
+      onProgress: function () {
+        // 连续滚动途中也会分批渲染；定期合并，避免虚拟列表丢掉已滚过的航班。
+        if (mergeCurrent()) {
+          console.log(
+            LOG_PREFIX + " 已合并航班 " + accumulated.flights.length + " 条"
+          );
+        }
       },
       onBatch: function () {
         // 只更新内存，避免每批都写一次存储；后台 30 分钟节流下这些写入本就会互相覆盖。

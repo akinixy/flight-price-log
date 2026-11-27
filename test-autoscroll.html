@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
-<meta name="virtual-time-budget" content="20000">
+<meta name="virtual-time-budget" content="60000">
 <title>自动滚动采集测试</title>
 <style>
   body { font-family: system-ui, "Microsoft YaHei", sans-serif; font-size: 14px; }
@@ -49,6 +49,7 @@
   }
 
   // delayMs 模拟携程接口响应时间：滚动触发后要过一会儿才追加下一批。
+  // triggerRatio 用于模拟“还没到底就开始分批渲染”的页面。
   var scrollerCleanup = null;
 
   function buildScroller(options) {
@@ -66,6 +67,7 @@
     var batch = options.batch || 4;
     var delayMs = options.delayMs || 0;
     var enabled = options.enabled !== false;
+    var triggerRatio = options.triggerRatio;
     var pending = false;
 
     function appendBatch(size) {
@@ -82,9 +84,9 @@
 
     function onScroll() {
       if (!enabled || pending || appended >= total) return;
-      var atBottom =
-        scroller.scrollTop + scroller.clientHeight >= scroller.scrollHeight - 2;
-      if (!atBottom) return;
+      var max = scroller.scrollHeight - scroller.clientHeight;
+      var threshold = triggerRatio === undefined ? max : max * triggerRatio;
+      if (scroller.scrollTop < threshold - 2) return;
 
       pending = true;
       var load = function () {
@@ -121,9 +123,11 @@
       target: target,
       listNode: scroller,
       count: function () { return itemCount(scroller); },
+      speedPxPerSec: 600,
       stepTimeoutMs: 400,
       idleRounds: 2,
       maxRounds: 40,
+      restoreDurationMs: 50,
       respectUserInput: false,
     });
     assertEqual("采集到全部条目", outcome.count, 16);
@@ -131,12 +135,13 @@
     assertEqual("结束时恢复滚动位置", scroller.scrollTop, 0);
 
     step("2b-tall-initial");
-    // 2b. 初始列表高于两轮滚动距离时，也必须继续滚到底再触发懒加载。
+    // 2b. 初始列表高于可视区域时，也必须继续滚到底再触发懒加载。
     var tallScroller = buildScroller({ total: 16, batch: 4, initial: 12 });
     var tallOutcome = await CtripAutoScroll.collect({
       target: tallScroller,
       listNode: tallScroller,
       count: function () { return itemCount(tallScroller); },
+      speedPxPerSec: 600,
       stepTimeoutMs: 100,
       idleRounds: 2,
       maxRounds: 40,
@@ -147,12 +152,13 @@
     assertEqual("初始高列表恢复滚动位置", tallScroller.scrollTop, 0);
 
     step("2c-large-batch");
-    // 2c. 单批新增高度超过两轮滚动距离时，也要继续滚到新底部。
+    // 2c. 单批新增高度远超一屏时，也要继续滚到新底部。
     var bigBatchScroller = buildScroller({ total: 20, batch: 12, initial: 4 });
     var bigBatchOutcome = await CtripAutoScroll.collect({
       target: bigBatchScroller,
       listNode: bigBatchScroller,
       count: function () { return itemCount(bigBatchScroller); },
+      speedPxPerSec: 600,
       stepTimeoutMs: 100,
       idleRounds: 2,
       maxRounds: 40,
@@ -163,12 +169,13 @@
     assertEqual("大批次恢复滚动位置", bigBatchScroller.scrollTop, 0);
 
     step("3-slow");
-    // 3. 接口响应慢于单个事件时也要等到，不能误判为没有更多。
+    // 3. 接口响应慢于单帧时也要等到，不能误判为没有更多。
     var slowScroller = buildScroller({ delayMs: 80, total: 16, batch: 4 });
     var slowOutcome = await CtripAutoScroll.collect({
       target: slowScroller,
       listNode: slowScroller,
       count: function () { return itemCount(slowScroller); },
+      speedPxPerSec: 600,
       stepTimeoutMs: 300,
       idleRounds: 2,
       maxRounds: 40,
@@ -177,52 +184,49 @@
     assertEqual("慢接口采集完整", slowOutcome.count, 16);
     assertEqual("慢接口正常结束", slowOutcome.stopped, "idle");
 
-    step("4-event-driven");
-    // 4. 事件驱动：内容变化时立即返回，而不是每轮干等到超时。
-    var eventScroller = buildScroller({ delayMs: 20, total: 8, batch: 4 });
-    var measureCalls = 0;
-    function countedMeasure() {
-      measureCalls += 1;
-      return eventScroller.scrollHeight + itemCount(eventScroller);
-    }
-    var EVENT_TIMEOUT_MS = 300;
-    var startedAt = Date.now();
-    var eventOutcome = await CtripAutoScroll.collect({
-      target: eventScroller,
-      listNode: eventScroller,
-      count: function () { return itemCount(eventScroller); },
-      measure: countedMeasure,
-      stepTimeoutMs: EVENT_TIMEOUT_MS,
+    step("4-growth-during-glide");
+    // 4. 列表在滚动途中分批增长（还没到底就追加）时，连续滚动不应停下。
+    var growScroller = buildScroller({ total: 16, batch: 4, triggerRatio: 0.5 });
+    var growOutcome = await CtripAutoScroll.collect({
+      target: growScroller,
+      listNode: growScroller,
+      count: function () { return itemCount(growScroller); },
+      speedPxPerSec: 600,
+      stepTimeoutMs: 100,
       idleRounds: 2,
       maxRounds: 40,
       respectUserInput: false,
     });
-    var elapsed = Date.now() - startedAt;
-    assertEqual("事件驱动采集完整", eventOutcome.count, 8);
-    // 每轮都干等超时的话总耗时会接近 轮数×300ms；事件驱动应远低于此。
-    assertEqual(
-      "事件驱动比逐轮干等快",
-      elapsed < eventOutcome.rounds * EVENT_TIMEOUT_MS * 0.8,
-      true
-    );
-    // 宽松上限：只排除“高频轮询”（原先 200ms 轮询会达到几十次）。
-    assertEqual("事件驱动没有高频轮询", measureCalls < 60, true);
+    assertEqual("滚动中增长也能采全", growOutcome.count, 16);
+    assertEqual("滚动中增长正常结束", growOutcome.stopped, "idle");
 
-    step("5-on-batch");
-    // 5. 滚动中每批都会回调 onBatch，便于边滚边合并。
-    var mergeScroller = buildScroller({ total: 16, batch: 4 });
-    var batches = [];
+    step("5-on-progress");
+    // 5. 连续滚动途中定期回调，便于边滚边合并已渲染的航班。
+    var progressScroller = buildScroller({ total: 16, batch: 4 });
+    var progressCalls = 0;
+    var progressTimes = [];
     await CtripAutoScroll.collect({
-      target: mergeScroller,
-      listNode: mergeScroller,
-      count: function () { return itemCount(mergeScroller); },
-      stepTimeoutMs: 200,
+      target: progressScroller,
+      listNode: progressScroller,
+      count: function () { return itemCount(progressScroller); },
+      speedPxPerSec: 400,
+      stepTimeoutMs: 100,
       idleRounds: 2,
       maxRounds: 40,
+      progressIntervalMs: 60,
       respectUserInput: false,
-      onBatch: function (info) { batches.push(info.count); },
+      onProgress: function () {
+        progressCalls += 1;
+        progressTimes.push(Date.now());
+      },
     });
-    assertEqual("滚动中多次回调", batches.length >= 3, true);
+    var minProgressGap = Infinity;
+    for (var pg = 1; pg < progressTimes.length; pg += 1) {
+      minProgressGap = Math.min(minProgressGap, progressTimes[pg] - progressTimes[pg - 1]);
+    }
+    assertEqual("滚动中多次回调合并", progressCalls >= 3, true);
+    assertEqual("进度回调按间隔节流", minProgressGap >= 45, true);
+    assertEqual("进度回调次数有上限", progressCalls <= 40, true);
 
     step("6-user-interrupt");
     // 6. 用户操作优先：采集过程中用户滚动页面应立即让出控制权，且不拉回原位。
@@ -231,6 +235,7 @@
       target: userScroller,
       listNode: userScroller,
       count: function () { return itemCount(userScroller); },
+      speedPxPerSec: 300,
       stepTimeoutMs: 300,
       idleRounds: 2,
       maxRounds: 40,
@@ -249,6 +254,7 @@
       target: staticScroller,
       listNode: staticScroller,
       count: function () { return itemCount(staticScroller); },
+      speedPxPerSec: 600,
       stepTimeoutMs: 60,
       idleRounds: 2,
       maxRounds: 30,
@@ -265,6 +271,7 @@
       target: interruptScroller,
       listNode: interruptScroller,
       count: function () { return itemCount(interruptScroller); },
+      speedPxPerSec: 600,
       stepTimeoutMs: 60,
       idleRounds: 5,
       maxRounds: 30,
@@ -275,76 +282,102 @@
     assertEqual("外部中断时不拉回滚动位置", interruptScroller.scrollTop, 25);
 
     step("9-max-rounds");
-    // 9. 轮数上限生效。
-    var capScroller = buildScroller({ total: 400, batch: 4 });
+    // 9. 底部轮数上限生效（模拟每批都要等待的页面）。
+    var capScroller = buildScroller({ total: 400, batch: 4, delayMs: 50 });
     var capped = await CtripAutoScroll.collect({
       target: capScroller,
       listNode: capScroller,
       count: function () { return itemCount(capScroller); },
-      stepTimeoutMs: 40,
+      speedPxPerSec: 600,
+      stepTimeoutMs: 200,
       idleRounds: 10,
-      maxRounds: 2,
+      maxRounds: 1,
       respectUserInput: false,
     });
     assertEqual("达到轮数上限", capped.stopped, "max-rounds");
 
-    step("9d-round-interval");
-    // 9d. 两轮滚动之间保留最小间隔，避免连续触发分批加载。
-    var pacedScroller = buildScroller({ total: 12, batch: 4 });
-    var PACE_MS = 120;
-    var stepTimes = [];
-    var lastRecordedTop = -1;
-    function recordStep() {
-      // 原生 scroll 事件可能紧跟在合成事件之后补发一次，按位置去重，只记滚动步。
-      if (pacedScroller.scrollTop === lastRecordedTop) return;
-      lastRecordedTop = pacedScroller.scrollTop;
-      stepTimes.push(Date.now());
-    }
-    pacedScroller.addEventListener("scroll", recordStep);
-    var pacedOutcome = await CtripAutoScroll.collect({
-      target: pacedScroller,
-      listNode: pacedScroller,
-      count: function () { return itemCount(pacedScroller); },
-      stepTimeoutMs: 120,
+    step("9d-continuous");
+    // 9d. 中段连续滚动：不应出现“动画一段、停一段”的节奏。
+    var contScroller = buildScroller({ total: 20, batch: 20, enabled: false });
+    var tops = [];
+    var sampler = setInterval(function () {
+      tops.push(contScroller.scrollTop);
+    }, 20);
+    var contOutcome = await CtripAutoScroll.collect({
+      target: contScroller,
+      listNode: contScroller,
+      count: function () { return itemCount(contScroller); },
+      speedPxPerSec: 600,
+      stepTimeoutMs: 60,
       idleRounds: 2,
-      maxRounds: 20,
-      roundIntervalMs: PACE_MS,
+      maxRounds: 10,
       respectUserInput: false,
     });
-    pacedScroller.removeEventListener("scroll", recordStep);
-    var minGap = Infinity;
-    for (var g = 1; g < stepTimes.length; g += 1) {
-      minGap = Math.min(minGap, stepTimes[g] - stepTimes[g - 1]);
+    clearInterval(sampler);
+    // 忽略结束时的回滚：出现明显后退就截断。
+    var usable = [];
+    for (var t = 0; t < tops.length; t += 1) {
+      if (t > 0 && tops[t] < tops[t - 1] - 2) break;
+      usable.push(tops[t]);
     }
-    assertEqual("放慢后仍采集完整", pacedOutcome.count, 12);
-    assertEqual("每轮都记录到滚动", stepTimes.length >= 4, true);
-    assertEqual("相邻滚动都保留最小间隔", minGap >= PACE_MS * 0.8, true);
+    var longestFlat = 0;
+    var flatRun = 0;
+    var maxTop = 0;
+    for (var m = 0; m < usable.length; m += 1) {
+      if (usable[m] > maxTop) maxTop = usable[m];
+    }
+    for (var f = 1; f < usable.length; f += 1) {
+      // 只统计中段；底部的等待期本来就不动。
+      if (usable[f] === usable[f - 1] && usable[f] < maxTop - 2) {
+        flatRun += 1;
+        if (flatRun > longestFlat) longestFlat = flatRun;
+      } else {
+        flatRun = 0;
+      }
+    }
+    // 中段必须出现足够多的递增位置，才能排除“瞬移到底”或“大步跳跃”。
+    var midDistinct = 0;
+    var maxJump = 0;
+    for (var d = 1; d < usable.length; d += 1) {
+      var delta = usable[d] - usable[d - 1];
+      if (delta > 0) {
+        if (delta > maxJump) maxJump = delta;
+        if (usable[d] < maxTop - 2) midDistinct += 1;
+      }
+    }
+    assertEqual("连续滚动采全", contOutcome.count, 20);
+    assertEqual("连续滚动正常结束", contOutcome.stopped, "idle");
+    assertEqual("中段有足够多的滚动采样", midDistinct >= 20, true);
+    assertEqual("没有瞬移式跳变", maxJump <= 150, true);
+    // 每个采样点间隔约 20ms；分段实现每步会停顿 100ms 以上。
+    assertEqual("中段最长停顿不超过 2 个采样点", longestFlat <= 2, true);
 
     step("9e-budget-cap");
-    // 9e. 间隔等待不会把滚动推过总时长预算。
+    // 9e. 总时长预算耗尽时停止，并恢复滚动位置。
     var budgetCapScroller = buildScroller({ total: 400, batch: 4 });
     var budgetCapped = await CtripAutoScroll.collect({
       target: budgetCapScroller,
       listNode: budgetCapScroller,
       count: function () { return itemCount(budgetCapScroller); },
+      speedPxPerSec: 400,
       stepTimeoutMs: 20,
       idleRounds: 10,
       maxRounds: 20,
-      roundIntervalMs: 200,
       maxDurationMs: 100,
       respectUserInput: false,
     });
-    assertEqual("预算耗尽时不再滚动", budgetCapped.rounds, 1);
     assertEqual("预算耗尽按超时结束", budgetCapped.stopped, "timeout");
+    assertEqual("预算结束恢复滚动位置", budgetCapScroller.scrollTop, 0);
 
     step("10-describe");
-    // 9b. 总时长预算生效，正常结束仍恢复滚动位置（用假时钟避免虚拟时间不稳定）。
+    // 10. 总时长预算用假时钟验证，正常结束仍恢复滚动位置。
     var budgetScroller = buildScroller({ total: 400, batch: 4, delayMs: 10 });
     var fakeClock = 0;
     var budgetOutcome = await CtripAutoScroll.collect({
       target: budgetScroller,
       listNode: budgetScroller,
       count: function () { return itemCount(budgetScroller); },
+      speedPxPerSec: 400,
       stepTimeoutMs: 30,
       idleRounds: 10,
       maxRounds: 100,
@@ -358,7 +391,7 @@
     assertEqual("达到总时长预算", budgetOutcome.stopped, "timeout");
     assertEqual("预算结束恢复滚动位置", budgetScroller.scrollTop, 0);
 
-    // 9c. 同时识别祖先与列表内部的可滚动容器。
+    // 10b. 同时识别祖先与列表内部的可滚动容器。
     var outer = document.createElement("div");
     outer.style.cssText = "height:120px;overflow-y:auto;";
     var inner = document.createElement("div");
@@ -397,21 +430,21 @@
     );
     wrapper.remove();
 
-    // 10. 描述滚动容器，便于在真实页面排查。
+    // 10c. 描述滚动容器，便于在真实页面排查。
     var described = CtripAutoScroll.describeTarget(scroller);
     assertEqual("描述包含标签名", described.indexOf("div") === 0, true);
     assertEqual("描述包含 id", described.indexOf("#scroller") >= 0, true);
 
-    step("12-mid-step-timeout");
-    // 12. 列表还没到底时不要每步都等 3 秒，应该快速经过中段。
+    step("12-no-mid-pause");
+    // 12. 高列表一路滚到底，不允许每步停下等待。
     var tallStartedAt = Date.now();
     var tallScroller = buildScroller({ total: 20, batch: 20, enabled: false });
     var tallOutcome = await CtripAutoScroll.collect({
       target: tallScroller,
       listNode: tallScroller,
       count: function () { return itemCount(tallScroller); },
-      stepTimeoutMs: 300,
-      midStepTimeoutMs: 20,
+      speedPxPerSec: 600,
+      stepTimeoutMs: 100,
       idleRounds: 2,
       maxRounds: 30,
       respectUserInput: false,
@@ -420,7 +453,7 @@
     assertEqual("高列表正常结束", tallOutcome.stopped, "idle");
     assertEqual(
       "中段不逐轮等待超时",
-      Date.now() - tallStartedAt < 1500,
+      Date.now() - tallStartedAt < 2500,
       true
     );
 
@@ -432,6 +465,7 @@
       target: bottomScroller,
       listNode: bottomScroller,
       count: function () { return itemCount(bottomScroller); },
+      speedPxPerSec: 600,
       stepTimeoutMs: 80,
       idleRounds: 2,
       maxRounds: 30,
@@ -451,20 +485,139 @@
     assertEqual("加载更多后继续采集", bottomOutcome.count, 8);
     assertEqual("加载更多后正常结束", bottomOutcome.stopped, "idle");
 
-    step("14-smooth-step");
-    // 14. 滚动步进返回 Promise，动画结束后到达目标位置。
-    var smoothScroller = buildScroller({ total: 20, batch: 20, enabled: false });
-    var smoothBefore = smoothScroller.scrollTop;
-    var stepPromise = CtripAutoScroll.scrollStep(smoothScroller, 0.9, {
-      durationMs: 50,
+    step("14-glide-target");
+    // 14. 连续滚动函数单独可用：到达底部后返回 bottom。
+    var glideScroller = buildScroller({ total: 8, batch: 8, enabled: false });
+    var glideReason = await CtripAutoScroll.glideToBottom([glideScroller], {
+      speedPxPerSec: 600,
+      deadline: Date.now() + 5000,
     });
+    assertEqual("连续滚动到达底部", glideReason, "bottom");
     assertEqual(
-      "scrollStep 返回 Promise",
-      !!stepPromise && typeof stepPromise.then === "function",
+      "连续滚动停在底部",
+      glideScroller.scrollTop + glideScroller.clientHeight >=
+        glideScroller.scrollHeight - 2,
       true
     );
-    await stepPromise;
-    assertEqual("平滑滚动到达目标", smoothScroller.scrollTop > smoothBefore, true);
+
+    step("15-height-growth");
+    // 15. 只增高、不新增节点的懒加载也要算作新内容并继续滚到底。
+    var heightScroller = buildScroller({ total: 4, batch: 4, enabled: false });
+    var spacer = document.createElement("div");
+    spacer.style.height = "0px";
+    heightScroller.appendChild(spacer);
+    var heightGrows = 0;
+    var heightBatches = 0;
+    function onHeightScroll(event) {
+      // 只响应扩展补发的合成事件，确保底部的 notifyScroll 真的生效。
+      if (event && event.isTrusted) return;
+      if (heightGrows >= 2) return;
+      var atBottom =
+        heightScroller.scrollTop + heightScroller.clientHeight >=
+        heightScroller.scrollHeight - 2;
+      if (!atBottom) return;
+      heightGrows += 1;
+      spacer.style.height = heightGrows * 100 + "px";
+    }
+    heightScroller.addEventListener("scroll", onHeightScroll);
+    var heightOutcome = await CtripAutoScroll.collect({
+      target: heightScroller,
+      listNode: heightScroller,
+      count: function () { return itemCount(heightScroller); },
+      speedPxPerSec: 600,
+      stepTimeoutMs: 100,
+      idleRounds: 2,
+      maxRounds: 30,
+      respectUserInput: false,
+      onBatch: function () { heightBatches += 1; },
+    });
+    heightScroller.removeEventListener("scroll", onHeightScroll);
+    assertEqual("高度增长触发两次加载", heightGrows, 2);
+    assertEqual("高度增长按批次合并", heightBatches, 2);
+    assertEqual("高度增长后正常结束", heightOutcome.stopped, "idle");
+
+    step("16-multi-target");
+    // 16. 多个滚动容器（内层列表 + 文档）都要滚动，并且都恢复原位。
+    var outerBox = document.createElement("div");
+    outerBox.style.cssText = "height:120px;overflow-y:auto;";
+    var outerContent = document.createElement("div");
+    outerContent.style.height = "400px";
+    outerBox.appendChild(outerContent);
+    var innerBox = document.createElement("div");
+    innerBox.style.cssText = "height:100px;overflow-y:auto;";
+    var innerContent = document.createElement("div");
+    innerContent.style.height = "300px";
+    innerBox.appendChild(innerContent);
+    document.body.appendChild(outerBox);
+    document.body.appendChild(innerBox);
+    var outerMaxTop = 0;
+    var innerMaxTop = 0;
+    function recordOuterTop() {
+      if (outerBox.scrollTop > outerMaxTop) outerMaxTop = outerBox.scrollTop;
+    }
+    function recordInnerTop() {
+      if (innerBox.scrollTop > innerMaxTop) innerMaxTop = innerBox.scrollTop;
+    }
+    outerBox.addEventListener("scroll", recordOuterTop);
+    innerBox.addEventListener("scroll", recordInnerTop);
+    var multiOutcome = await CtripAutoScroll.collect({
+      targets: [innerBox, outerBox],
+      listNode: innerBox,
+      count: function () { return 0; },
+      speedPxPerSec: 600,
+      stepTimeoutMs: 60,
+      idleRounds: 2,
+      maxRounds: 10,
+      respectUserInput: false,
+    });
+    outerBox.removeEventListener("scroll", recordOuterTop);
+    innerBox.removeEventListener("scroll", recordInnerTop);
+    assertEqual("多容器都滚动到底部", outerMaxTop >= 278 && innerMaxTop >= 198, true);
+    assertEqual("多容器都恢复原位", outerBox.scrollTop === 0 && innerBox.scrollTop === 0, true);
+    assertEqual("多容器正常结束", multiOutcome.stopped, "idle");
+    outerBox.remove();
+    innerBox.remove();
+
+    step("17-interrupt-in-wait");
+    // 17. 到达底部后的等待期里用户操作，也要在一个轮询周期内中断且不拉回。
+    var waitScroller = buildScroller({ total: 4, batch: 4, enabled: false });
+    var waitRun = CtripAutoScroll.collect({
+      target: waitScroller,
+      listNode: waitScroller,
+      count: function () { return itemCount(waitScroller); },
+      speedPxPerSec: 600,
+      stepTimeoutMs: 1000,
+      idleRounds: 2,
+      maxRounds: 10,
+    });
+    await wait(400);
+    var interruptAt = Date.now();
+    waitScroller.scrollTop = 33;
+    window.dispatchEvent(new WheelEvent("wheel", { deltaY: 120 }));
+    var waitOutcome = await waitRun;
+    var interruptElapsed = Date.now() - interruptAt;
+    assertEqual("等待期用户操作也中断", waitOutcome.stopped, "user-interrupted");
+    assertEqual("等待期中断及时生效", interruptElapsed < 500, true);
+    assertEqual("等待期中断不拉回位置", waitScroller.scrollTop, 33);
+
+    step("18-stop-mid-glide");
+    // 18. 滚动途中外部条件变化（如 URL 切换）立即停止，且不恢复位置。
+    var stopScroller = buildScroller({ total: 20, batch: 20, enabled: false });
+    var stopFlag = false;
+    setTimeout(function () { stopFlag = true; }, 250);
+    var stopOutcome = await CtripAutoScroll.collect({
+      target: stopScroller,
+      listNode: stopScroller,
+      count: function () { return itemCount(stopScroller); },
+      speedPxPerSec: 300,
+      stepTimeoutMs: 100,
+      idleRounds: 2,
+      maxRounds: 10,
+      respectUserInput: false,
+      shouldStop: function () { return stopFlag; },
+    });
+    assertEqual("滚动途中外部停止", stopOutcome.stopped, "interrupted");
+    assertEqual("外部停止时不恢复位置", stopScroller.scrollTop > 0, true);
   }
 
   run()

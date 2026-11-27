@@ -9,21 +9,17 @@
 })(typeof globalThis !== "undefined" ? globalThis : this, function () {
   "use strict";
 
-  // 单步最长等待时间：内容靠 MutationObserver / ResizeObserver 驱动，这里是兜底上限。
+  // 到达底部后等待新批次的最长时间；中段不停顿，也不按步等待。
   var DEFAULT_STEP_TIMEOUT_MS = 2500;
   var DEFAULT_MAX_ROUNDS = 60;
   var DEFAULT_MAX_DURATION_MS = 45000;
   var DEFAULT_IDLE_ROUNDS = 2;
-  var DEFAULT_STEP_RATIO = 0.9;
-  // 两轮滚动之间的最小间隔，用于放慢节奏、减少短时间内触发的分批加载请求。
-  var DEFAULT_ROUND_INTERVAL_MS = 0;
+  // 连续滚动速度：每秒滚过多少个可视高度，约 0.7 秒一屏。
+  var DEFAULT_SPEED_SCREENS_PER_SEC = 1.5;
+  var DEFAULT_MAX_SPEED_PX_PER_SEC = 1800;
+  // 滚动过程中定期回调，便于边滚边合并快照。
+  var DEFAULT_PROGRESS_INTERVAL_MS = 500;
   var USER_EVENTS = ["wheel", "touchstart", "pointerdown", "keydown"];
-
-  function sleep(ms) {
-    return new Promise(function (resolve) {
-      setTimeout(resolve, ms);
-    });
-  }
 
   function isScrollable(node) {
     return !!node && node.scrollHeight > node.clientHeight + 20;
@@ -180,15 +176,170 @@
     });
   }
 
-  function scrollStep(target, ratio, options) {
-    if (!target) return Promise.resolve();
-    var step = Math.max(200, Math.round(target.clientHeight * ratio));
-    var max = Math.max(0, target.scrollHeight - target.clientHeight);
-    var next = Math.min(max, target.scrollTop + step);
-    var durationMs =
-      options && typeof options.durationMs === "number" ? options.durationMs : 0;
-    var isAborted = options && options.isAborted;
-    return animateScroll(target, next, durationMs, isAborted);
+  // 所有滚动目标都在底部（不可滚动的目标视为已到底）。
+  function allAtBottom(targets) {
+    for (var i = 0; i < targets.length; i += 1) {
+      var node = targets[i];
+      if (!node) continue;
+      if (
+        node.scrollHeight > node.clientHeight + 2 &&
+        node.scrollTop + node.clientHeight < node.scrollHeight - 2
+      ) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  // 补发合成 scroll 事件，触发依赖滚动事件的懒加载。
+  function notifyScroll(targets) {
+    for (var i = 0; i < targets.length; i += 1) {
+      if (targets[i]) applyScroll(targets[i], targets[i].scrollTop, true);
+    }
+  }
+
+  // 连续匀速滚向底部：列表在滚动中增长时目标随之后移，中途不停顿。
+  // 只有真正到达底部、用户接管页面、外部要求停止或预算耗尽时才返回。
+  function glideToBottom(targets, options) {
+    var speed = options.speedPxPerSec;
+    if (!(speed > 0)) speed = 1200;
+    var isAborted = options.isAborted || function () {
+      return false;
+    };
+    var shouldStop = options.shouldStop || function () {
+      return false;
+    };
+    var now = options.now || Date.now;
+    var deadline =
+      typeof options.deadline === "number" ? options.deadline : Infinity;
+    var onProgress = options.onProgress || null;
+    var progressIntervalMs =
+      typeof options.progressIntervalMs === "number"
+        ? options.progressIntervalMs
+        : DEFAULT_PROGRESS_INTERVAL_MS;
+    var rampMs = typeof options.rampMs === "number" ? options.rampMs : 200;
+    var hasRaf = typeof requestAnimationFrame === "function";
+    // 无头/后台环境里 rAF 可能不触发，用 32ms 定时器兜底（约 30fps）。
+    var watchdogDelayMs = 32;
+    // 合成 scroll 事件用于触发懒加载；原生事件在部分环境不派发，节流发送。
+    var notifyIntervalMs = 150;
+
+    return new Promise(function (resolve) {
+      var done = false;
+      var rafId = null;
+      var watchdog = null;
+      var lastTickAt = null;
+      var lastProgressAt = 0;
+      var lastNotifyAt = 0;
+      var segmentStartedAt = null;
+
+      function finish(reason) {
+        if (done) return;
+        done = true;
+        if (rafId !== null && typeof cancelAnimationFrame === "function") {
+          cancelAnimationFrame(rafId);
+          rafId = null;
+        }
+        if (watchdog !== null) {
+          clearTimeout(watchdog);
+          watchdog = null;
+        }
+        resolve(reason);
+      }
+
+      function tick() {
+        if (done) return;
+        if (isAborted()) {
+          finish("aborted");
+          return;
+        }
+        if (shouldStop()) {
+          finish("interrupted");
+          return;
+        }
+
+        var current = now();
+        if (current >= deadline) {
+          finish("timeout");
+          return;
+        }
+
+        var dt = lastTickAt === null ? 16 : current - lastTickAt;
+        if (!(dt > 0)) dt = 16;
+        // 后台标签页的定时器会被节流到约 1 秒一次；上限放宽到 1 秒，
+        // 保证被节流时仍按真实时间前进，而不是每次只走 64ms。
+        if (dt > 1000) dt = 1000;
+        lastTickAt = current;
+        if (segmentStartedAt === null) segmentStartedAt = current;
+
+        // 起步用 200ms 轻微加速，避免从静止突然跳到最高速。
+        var ramp =
+          rampMs > 0 ? Math.min(1, (current - segmentStartedAt) / rampMs) : 1;
+        var factor = 0.2 + 0.8 * ramp;
+        var distance = (speed * factor * dt) / 1000;
+        var moved = false;
+
+        for (var i = 0; i < targets.length; i += 1) {
+          var node = targets[i];
+          if (!node) continue;
+          var max = node.scrollHeight - node.clientHeight;
+          if (max <= 2 || node.scrollTop >= max - 1) continue;
+          var next = Math.min(max, node.scrollTop + distance);
+          if (next > node.scrollTop) {
+            applyScroll(node, next, false);
+            moved = true;
+          }
+        }
+
+        if (allAtBottom(targets)) {
+          // 底部事件由 collect 在记录基线后补发，保证同步追加的内容算作增长。
+          finish("bottom");
+          return;
+        }
+
+        if (moved && current - lastNotifyAt >= notifyIntervalMs) {
+          lastNotifyAt = current;
+          notifyScroll(targets);
+        }
+
+        if (moved && onProgress && current - lastProgressAt >= progressIntervalMs) {
+          lastProgressAt = current;
+          try {
+            onProgress();
+          } catch (error) {
+            // 合并失败不影响滚动。
+          }
+        }
+        schedule();
+      }
+
+      function schedule() {
+        if (done) return;
+        if (hasRaf && rafId === null) {
+          rafId = requestAnimationFrame(function () {
+            rafId = null;
+            tick();
+          });
+        }
+        // 后台标签页或测试环境里 rAF 可能不触发，用定时器兜底推进。
+        if (watchdog === null) {
+          watchdog = setTimeout(function () {
+            watchdog = null;
+            if (done) return;
+            if (
+              lastTickAt === null ||
+              now() - lastTickAt >= watchdogDelayMs
+            ) {
+              tick();
+            } else {
+              schedule();
+            }
+          }, watchdogDelayMs);
+        }
+      }
+
+      schedule();
+    });
   }
 
   // 事件驱动地等待新内容：列表新增节点或滚动高度变化时立即返回。
@@ -206,6 +357,7 @@
     return new Promise(function (resolve) {
       var settled = false;
       var timer = null;
+      var abortPoll = null;
       var mutationObserver = null;
       var resizeObserver = null;
 
@@ -213,6 +365,10 @@
         if (timer !== null) {
           clearTimeout(timer);
           timer = null;
+        }
+        if (abortPoll !== null) {
+          clearInterval(abortPoll);
+          abortPoll = null;
         }
         if (mutationObserver) {
           mutationObserver.disconnect();
@@ -243,6 +399,13 @@
         // 超时兜底：没有新内容时直接判定为“本轮无增长”。
         finish(measure() > baseline);
       }, timeoutMs);
+
+      // 用户操作或 URL 变化不会产生 DOM 变化，轮询保证等待期也能及时中断。
+      if (typeof setInterval === "function") {
+        abortPoll = setInterval(function () {
+          if (isAborted()) finish(false);
+        }, 100);
+      }
 
       // 新批次通常表现为往列表里追加节点。
       if (typeof MutationObserver === "function" && listNode) {
@@ -292,9 +455,9 @@
     };
   }
 
-  // 反复逐步下滚，直到滚到底部且连续 idleRounds 轮没有新内容、达到 maxRounds、
-  // 被 shouldStop 中断，或用户开始自己操作页面。
-  // 每轮调用 onRound；发现新内容时调用 onBatch；结束时恢复原始滚动位置。
+  // 连续滚动到列表底部：中途不停顿，只在到达底部后等待新批次；
+  // 连续 idleRounds 次到底都没有新内容、达到 maxRounds、被 shouldStop
+  // 中断，或用户开始自己操作页面时结束。结束时恢复原始滚动位置。
   async function collect(options) {
     var targets =
       Array.isArray(options.targets) && options.targets.length
@@ -306,7 +469,9 @@
         : [];
     var target = targets[0] || null;
     var listNode = options.listNode || target;
-    var count = options.count;
+    var count = options.count || function () {
+      return 0;
+    };
     var measure =
       options.measure ||
       function () {
@@ -320,11 +485,14 @@
     var maxRounds = options.maxRounds || DEFAULT_MAX_ROUNDS;
     var maxDurationMs = options.maxDurationMs || DEFAULT_MAX_DURATION_MS;
     var idleRounds = options.idleRounds || DEFAULT_IDLE_ROUNDS;
-    var stepRatio = options.stepRatio || DEFAULT_STEP_RATIO;
-    var roundIntervalMs =
-      options.roundIntervalMs === undefined
-        ? DEFAULT_ROUND_INTERVAL_MS
-        : options.roundIntervalMs;
+    var restoreDurationMs =
+      typeof options.restoreDurationMs === "number"
+        ? options.restoreDurationMs
+        : 0;
+    var progressIntervalMs =
+      typeof options.progressIntervalMs === "number"
+        ? options.progressIntervalMs
+        : DEFAULT_PROGRESS_INTERVAL_MS;
     var respectUserInput = options.respectUserInput !== false;
     var now = typeof options.now === "function" ? options.now : Date.now;
     var shouldStop =
@@ -334,28 +502,37 @@
       };
     var onRound = options.onRound || function () {};
     var onBatch = options.onBatch || function () {};
+    var onProgress =
+      typeof options.onProgress === "function" ? options.onProgress : null;
     var onBottomIdle =
       typeof options.onBottomIdle === "function" ? options.onBottomIdle : null;
-    var midStepTimeoutMs =
-      typeof options.midStepTimeoutMs === "number"
-        ? options.midStepTimeoutMs
-        : stepTimeoutMs;
-    var stepDurationMs =
-      typeof options.stepDurationMs === "number" ? options.stepDurationMs : 0;
-    var restoreDurationMs =
-      typeof options.restoreDurationMs === "number"
-        ? options.restoreDurationMs
-        : 0;
+
+    var speedPxPerSec = options.speedPxPerSec;
+    if (!(speedPxPerSec > 0)) {
+      var viewHeight = 0;
+      for (var v = 0; v < targets.length; v += 1) {
+        if (targets[v] && targets[v].clientHeight > viewHeight) {
+          viewHeight = targets[v].clientHeight;
+        }
+      }
+      speedPxPerSec = Math.min(
+        DEFAULT_MAX_SPEED_PX_PER_SEC,
+        Math.max(
+          400,
+          Math.round(viewHeight * DEFAULT_SPEED_SCREENS_PER_SEC)
+        )
+      );
+    }
 
     var originalTops = targets.map(function (t) {
       return t.scrollTop;
     });
     var startedAt = now();
+    var deadline = startedAt + maxDurationMs;
     var rounds = 0;
     var idle = 0;
     var userInterrupted = false;
     var lastCount = count();
-    var lastStepAt = 0;
     var result = { rounds: 0, count: lastCount, stopped: "max-rounds" };
 
     function isAborted() {
@@ -368,22 +545,6 @@
         tasks.push(animateScroll(targets[i], originalTops[i], durationMs, null));
       }
       return Promise.all(tasks);
-    }
-
-    // 只有滚到底部才把「本轮没有增长」计为空闲；否则列表较高或
-    // 单批新增较多时，会在一两轮后就误判为没有更多内容。
-    function isAtBottom() {
-      for (var i = 0; i < targets.length; i += 1) {
-        var node = targets[i];
-        if (!node) continue;
-        if (
-          node.scrollHeight > node.clientHeight + 2 &&
-          node.scrollTop + node.clientHeight < node.scrollHeight - 2
-        ) {
-          return false;
-        }
-      }
-      return true;
     }
 
     var disposeInteraction = respectUserInput
@@ -402,64 +563,52 @@
           result = { rounds: rounds, count: lastCount, stopped: "interrupted" };
           break;
         }
-        if (now() - startedAt >= maxDurationMs) {
+        if (now() >= deadline) {
           result = { rounds: rounds, count: lastCount, stopped: "timeout" };
           break;
         }
 
-        // 放慢节奏：两轮滚动之间至少间隔 roundIntervalMs，避免连续触发分批加载。
-        if (roundIntervalMs > 0) {
-          if (lastStepAt) {
-            var currentTime = now();
-            var budgetLeft = maxDurationMs - (currentTime - startedAt);
-            if (budgetLeft <= 0) {
-              result = { rounds: rounds, count: lastCount, stopped: "timeout" };
-              break;
-            }
-            var waitMs = roundIntervalMs - (currentTime - lastStepAt);
-            // 等待不能超过剩余预算，否则会在截止时间之后仍发出一次滚动。
-            if (waitMs > budgetLeft) waitMs = budgetLeft;
-            if (waitMs > 0) {
-              await sleep(waitMs);
-              if (userInterrupted) {
-                result = {
-                  rounds: rounds,
-                  count: lastCount,
-                  stopped: "user-interrupted",
-                };
-                break;
-              }
-              if (shouldStop()) {
-                result = { rounds: rounds, count: lastCount, stopped: "interrupted" };
-                break;
-              }
-              if (now() - startedAt >= maxDurationMs) {
-                result = { rounds: rounds, count: lastCount, stopped: "timeout" };
-                break;
-              }
-            }
-          }
-          lastStepAt = now();
+        var endReason = await glideToBottom(targets, {
+          speedPxPerSec: speedPxPerSec,
+          isAborted: isAborted,
+          shouldStop: shouldStop,
+          now: now,
+          deadline: deadline,
+          onProgress: onProgress,
+          progressIntervalMs: progressIntervalMs,
+        });
+
+        if (userInterrupted) {
+          result = { rounds: rounds, count: lastCount, stopped: "user-interrupted" };
+          break;
+        }
+        if (shouldStop()) {
+          result = { rounds: rounds, count: lastCount, stopped: "interrupted" };
+          break;
+        }
+        if (endReason === "timeout") {
+          result = { rounds: rounds, count: lastCount, stopped: "timeout" };
+          break;
+        }
+        if (endReason === "aborted") {
+          result = { rounds: rounds, count: lastCount, stopped: "user-interrupted" };
+          break;
         }
 
         rounds += 1;
+        // 已经到底：先记基线，再补发一次 scroll 事件触发懒加载，
+        // 这样同步追加的内容也会被 waitForGrowth 立即识别为增长。
         var baseline = measure();
-        var stepTasks = [];
-        for (var s = 0; s < targets.length; s += 1) {
-          stepTasks.push(
-            scrollStep(targets[s], stepRatio, {
-              durationMs: stepDurationMs,
-              isAborted: isAborted,
-            })
-          );
+        notifyScroll(targets);
+        var budgetLeftMs = deadline - now();
+        if (budgetLeftMs <= 0) {
+          result = { rounds: rounds, count: lastCount, stopped: "timeout" };
+          break;
         }
-        await Promise.all(stepTasks);
-
-        var atBottomAfterScroll = isAtBottom();
         var outcome = await waitForGrowth({
           measure: measure,
           baseline: baseline,
-          timeoutMs: atBottomAfterScroll ? stepTimeoutMs : midStepTimeoutMs,
+          timeoutMs: Math.min(stepTimeoutMs, budgetLeftMs),
           listNode: listNode,
           target: target,
           targets: targets,
@@ -482,7 +631,7 @@
           idle = 0;
           lastCount = nowCount;
           await onBatch({ round: rounds, count: nowCount });
-        } else if (isAtBottom()) {
+        } else if (allAtBottom(targets)) {
           var loadMore =
             onBottomIdle &&
             onBottomIdle({ round: rounds, count: nowCount }) === true;
@@ -492,7 +641,7 @@
             idle += 1;
           }
         } else {
-          // 还没滚到底，继续下一轮；不计空闲。
+          // 等待期间窗口尺寸变化等原因离开底部时，不计空闲，继续下一段滚动。
           idle = 0;
         }
 
@@ -530,7 +679,7 @@
     findScrollTarget: findScrollTarget,
     findScrollTargets: findScrollTargets,
     describeTarget: describeTarget,
-    scrollStep: scrollStep,
+    glideToBottom: glideToBottom,
     waitForGrowth: waitForGrowth,
     watchUserInterruption: watchUserInterruption,
     collect: collect,
