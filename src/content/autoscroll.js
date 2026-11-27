@@ -547,6 +547,14 @@
       return Promise.all(tasks);
     }
 
+    function totalHeight() {
+      var total = 0;
+      for (var h = 0; h < targets.length; h += 1) {
+        total += targets[h].scrollHeight || 0;
+      }
+      return total;
+    }
+
     var disposeInteraction = respectUserInput
       ? watchUserInterruption(function () {
           userInterrupted = true;
@@ -600,6 +608,7 @@
         // 这样同步追加的内容也会被 waitForGrowth 立即识别为增长。
         var baseline = measure();
         notifyScroll(targets);
+        var heightBefore = totalHeight();
         var budgetLeftMs = deadline - now();
         if (budgetLeftMs <= 0) {
           result = { rounds: rounds, count: lastCount, stopped: "timeout" };
@@ -631,6 +640,11 @@
           idle = 0;
           lastCount = nowCount;
           await onBatch({ round: rounds, count: nowCount });
+          // 新批次只是填满了已有的底部空间（列表高度没变），已经没有更多可滚；
+          // 直接结束，更晚的批次由 20 秒延迟观察窗直接合并。
+          if (allAtBottom(targets) && totalHeight() <= heightBefore) {
+            idle = idleRounds;
+          }
         } else if (allAtBottom(targets)) {
           var loadMore =
             onBottomIdle &&

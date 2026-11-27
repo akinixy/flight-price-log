@@ -618,6 +618,46 @@
     });
     assertEqual("滚动途中外部停止", stopOutcome.stopped, "interrupted");
     assertEqual("外部停止时不恢复位置", stopScroller.scrollTop > 0, true);
+
+    step("19-bottom-fill");
+    // 19. 到底后新批次只是填满已有空白（列表高度不变）时，合并后直接结束，不再等第二轮。
+    var fillScroller = buildScroller({ total: 4, batch: 4, enabled: false });
+    var fillSpacer = document.createElement("div");
+    fillSpacer.style.height = "400px";
+    fillScroller.appendChild(fillSpacer);
+    var fillDone = false;
+    function onFillScroll(event) {
+      if (event && event.isTrusted) return;
+      if (fillDone) return;
+      var atBottom =
+        fillScroller.scrollTop + fillScroller.clientHeight >=
+        fillScroller.scrollHeight - 2;
+      if (!atBottom) return;
+      fillDone = true;
+      for (var i = 0; i < 4; i += 1) {
+        var item = document.createElement("div");
+        item.className = "item";
+        fillScroller.appendChild(item);
+      }
+      // 同步减少占位高度，保持 scrollHeight 不变。
+      fillSpacer.style.height = "200px";
+    }
+    fillScroller.addEventListener("scroll", onFillScroll);
+    var fillOutcome = await CtripAutoScroll.collect({
+      target: fillScroller,
+      listNode: fillScroller,
+      count: function () { return itemCount(fillScroller); },
+      speedPxPerSec: 600,
+      stepTimeoutMs: 120,
+      idleRounds: 1,
+      maxRounds: 10,
+      respectUserInput: false,
+    });
+    fillScroller.removeEventListener("scroll", onFillScroll);
+    assertEqual("底部填充后采到新条目", fillOutcome.count, 8);
+    assertEqual("底部填充后正常结束", fillOutcome.stopped, "idle");
+    assertEqual("底部填充后只等一轮", fillOutcome.rounds, 1);
+    assertEqual("底部填充后恢复原位", fillScroller.scrollTop, 0);
   }
 
   run()

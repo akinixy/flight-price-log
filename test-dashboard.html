@@ -15,7 +15,7 @@
 <div id="app" class="dashboard-app">
   <header class="dashboard-header">
     <div class="dashboard-heading"><p class="dashboard-eyebrow">航班价格记录簿</p><h1>价格总览</h1><p class="dashboard-subtitle">test</p></div>
-    <div class="dashboard-actions"><button id="refreshButton" class="button" type="button">刷新</button></div>
+    <div class="dashboard-actions"><button id="exportReportButton" class="button" type="button">导出报告</button><button id="refreshButton" class="button" type="button">刷新</button></div>
   </header>
   <main class="dashboard-main">
     <section id="summary" class="summary-grid"></section>
@@ -113,6 +113,7 @@
 <script src="src/shared/flight.js"></script>
 <script src="src/popup/chart.js"></script>
 <script src="src/shared/model.js"></script>
+<script src="src/shared/report.js"></script>
 <script src="src/dashboard/dashboard.js"></script>
 <script>
 (function () {
@@ -160,6 +161,22 @@
         trendSelect.options[trendSelect.selectedIndex].textContent.indexOf("CA1832") !== -1
     );
     check("历史表存在", !!document.querySelector(".trend-chart + .table-wrap"));
+    check(
+      "导出报告按钮可用",
+      !!document.getElementById("exportReportButton") &&
+        !document.getElementById("exportReportButton").disabled
+    );
+    check(
+      "报告生成器可用",
+      !!window.CtripReport && typeof window.CtripReport.buildReport === "function"
+    );
+    var reportHtml = window.CtripReport.buildReport(
+      window.__testStore.ctripRoutes,
+      { now: 1764200000000 }
+    );
+    check("报告包含航线名称", reportHtml.indexOf("上海") !== -1);
+    check("报告包含当前价格", reportHtml.indexOf("¥650") !== -1);
+    check("报告包含非官方声明", reportHtml.indexOf("非官方工具") !== -1);
 
     var firstChip = document.querySelector(".date-chip");
     if (firstChip) {

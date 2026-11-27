@@ -38,7 +38,7 @@ node tools/build-fixtures.js [页面.html]     # 从保存的真实页面裁剪 
 内容脚本按 manifest 顺序加载，彼此通过全局 `CtripFlight` / `CtripParser` / `CtripAutoScroll` 协作：
 
 1. `src/content/ctrip.js` 监听 DOM，`parser.js` 从页面 DOM 和 `<script>` 文本解析快照（航司、航班号、起降时间、价格）。
-2. 自动采集：`autoscroll.js` 以约 0.7 秒一屏的速度连续滚动触发分批渲染，中途不停顿；用户滚动/点击/按键时立即中断，只有正常结束才恢复原滚动位置；`ctrip.js` 控制节奏（连续匀速滚动、只在到达底部后等待新批次、总预算 60 秒、只在到达底部后计空闲，停滚后观察 20 秒延迟加载、必要时补采一轮），识别到 whaleguard 拦截页后停止。
+2. 自动采集：`autoscroll.js` 以约 0.7 秒一屏的速度连续滚动触发分批渲染，中途不停顿；用户滚动/点击/按键时立即中断，只有正常结束才恢复原滚动位置；`ctrip.js` 控制节奏（连续匀速滚动、只在到达底部后等待新批次约 1 秒、总预算 60 秒、只在到达底部后计空闲，停滚后观察 20 秒延迟加载：新批次优先直接合并，必要时补采一轮），识别到 whaleguard 拦截页后停止。
 3. 快照通过 `chrome.runtime.sendMessage`（`RECORD_SNAPSHOT` + `pageStartedAt`）发给 `src/background.js`，经 `shared/record.js` 的 `applySnapshot` 交给 `shared/merge.js` 合并后写入存储。
 4. 路由键格式 `oneway:出发代码-到达代码:YYYY-MM-DD:舱位`；每班身份是 `canonicalNo|departTime|arriveTime`；每班价格序列嵌在 `route.flightHistory`（样本 `[t, price]`）。
 5. 删除/清空会写墓碑时间（`ctripDeleted` / `ctripClearedAt`），配合 `pageStartedAt` 防止删除前打开的旧页面把数据写回来。
@@ -49,7 +49,7 @@ node tools/build-fixtures.js [页面.html]     # 从保存的真实页面裁剪 
 ## 界面
 
 - 弹窗（`src/popup/`）：按「出发地 → 目的地」分组，组间按组内最近记录时间倒序、组内按出发日期升序；每张日期卡片标题行右侧的「再查一次」使用采集时保存的 `route.url` 直达携程页面；卡片内可展开航班明细并按价格/用时/起飞排序；删除、清空均有二次确认；导入导出走 `shared/backup.js`（备份 v2，兼容 v1）。
-- 仪表盘（`src/dashboard/`）：同时是 `options_ui`（新标签页打开），只读；包含统计概览、日期对比、航班 × 日期矩阵、单航班趋势和样本表，数据模型在 `src/shared/model.js`。
+- 仪表盘（`src/dashboard/`）：同时是 `options_ui`（新标签页打开），只读；包含统计概览、日期对比、航班 × 日期矩阵、单航班趋势和样本表，数据模型在 `src/shared/model.js`；顶部「导出报告」通过 `src/shared/report.js` 生成可离线打开、可打印为 PDF 的单文件 HTML 报告。
 
 ## 测试约定
 

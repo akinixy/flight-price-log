@@ -19,6 +19,7 @@
     matrix: document.getElementById("matrix"),
     comparison: document.getElementById("comparison"),
     refreshButton: document.getElementById("refreshButton"),
+    exportReportButton: document.getElementById("exportReportButton"),
   };
 
   var routes = {};
@@ -668,6 +669,9 @@
 
   function renderAll() {
     groups = model.buildGroups(routes);
+    if (refs.exportReportButton) {
+      refs.exportReportButton.disabled = !groups.length;
+    }
     if (!groups.length) {
       currentGroupKey = null;
       currentDate = null;
@@ -715,6 +719,27 @@
     currentSeriesId = null;
     renderGroupViews();
   });
+
+  function exportReport() {
+    if (!window.CtripReport || !window.CtripReport.buildReport) return;
+    var html = window.CtripReport.buildReport(routes, { now: Date.now() });
+    var blob = new Blob([html], { type: "text/html;charset=utf-8" });
+    var url = URL.createObjectURL(blob);
+    var link = document.createElement("a");
+    link.href = url;
+    link.download =
+      "flight-price-report-" + new Date().toISOString().slice(0, 10) + ".html";
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    setTimeout(function () {
+      URL.revokeObjectURL(url);
+    }, 1000);
+  }
+
+  if (refs.exportReportButton) {
+    refs.exportReportButton.addEventListener("click", exportReport);
+  }
 
   refs.refreshButton.addEventListener("click", function () {
     load().catch(function (error) {

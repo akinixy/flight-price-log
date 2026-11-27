@@ -13,15 +13,15 @@
   // 首次加载很慢时不要急着提示「没有列表」，宽限一段时间再提示。
   var NO_FLIGHTS_GRACE_MS = 45000;
   var URL_POLL_MS = 1000;
-  // 连续滚动：中段不停顿，只在到达底部后等待新批次（3 秒 × 2 次空闲约 6 秒）。
-  var AUTOSCROLL_STEP_TIMEOUT_MS = 3000;
+  // 连续滚动：中段不停顿，只在到达底部后等一小会儿新批次。
+  var AUTOSCROLL_STEP_TIMEOUT_MS = 1000;
   var AUTOSCROLL_RESTORE_DURATION_MS = 300;
   var AUTOSCROLL_MAX_ROUNDS = 80;
   var AUTOSCROLL_MAX_DURATION_MS = 60000;
-  // 到底后连续 2 次没有新批次即结束；滚动途中不计空闲。
-  var AUTOSCROLL_IDLE_ROUNDS = 2;
+  // 到底后 1 次没有新批次即结束；更晚的批次由 20 秒观察窗直接合并。
+  var AUTOSCROLL_IDLE_ROUNDS = 1;
   var AUTO_TOTAL_BUDGET_MS = 60000;
-  // 主动滚动结束后继续观察页面；如果列表又增长，补采一轮。
+  // 主动滚动结束后继续观察页面；如果列表又增长，优先直接合并，必要时补采一轮。
   var LATE_WATCH_MS = 20000;
   var LATE_RESUME_MAX_MS = 20000;
   // 携程风控拦截页只有一行提示、没有航班列表。
@@ -50,6 +50,7 @@
   var autoCollectStopped = false;
   var autoCollectStartedAt = 0;
   var lateWatchTimer = null;
+  var lateWatchPoll = null;
   var lateWatchDispose = null;
   var lateWatchBaseline = 0;
   var lateResumeUsed = false;
@@ -287,7 +288,7 @@
   function evaluate() {
     var changed = mergeCurrent();
     if (!changed) return Promise.resolve();
-    checkLateWatchGrowth();
+    updateLateWatchBaseline();
     return flush();
   }
 
@@ -296,10 +297,23 @@
       clearTimeout(lateWatchTimer);
       lateWatchTimer = null;
     }
+    if (lateWatchPoll !== null) {
+      clearInterval(lateWatchPoll);
+      lateWatchPoll = null;
+    }
     if (lateWatchDispose) {
       lateWatchDispose();
       lateWatchDispose = null;
     }
+  }
+
+  // 延迟观察期间如果已经有新批次被正常合并，就抬高基线，避免再次触发补采。
+  function updateLateWatchBaseline() {
+    if (lateWatchTimer === null) return;
+    var list = document.querySelector(".flight-list.root-flights");
+    if (!list) return;
+    lateWatchBaseline =
+      list.scrollHeight + list.querySelectorAll(".flight-item").length;
   }
 
   // 主动滚动停止后，页面可能还在慢慢加载；保留一个非阻塞观察窗。
@@ -314,6 +328,7 @@
       clearLateWatch();
       autoCollectStopped = true;
     }, LATE_WATCH_MS);
+    lateWatchPoll = setInterval(checkLateWatchGrowth, 500);
     lateWatchDispose = CtripAutoScroll.watchUserInterruption(function () {
       clearLateWatch();
       autoCollectStopped = true;
@@ -324,7 +339,11 @@
   function checkLateWatchGrowth() {
     if (lateWatchTimer === null) return;
     var list = document.querySelector(".flight-list.root-flights");
-    if (!list) return;
+    if (!list) {
+      clearLateWatch();
+      autoCollectStopped = true;
+      return;
+    }
 
     var value =
       list.scrollHeight + list.querySelectorAll(".flight-item").length;
@@ -336,6 +355,16 @@
       return;
     }
     lateResumeUsed = true;
+
+    // 新批次已经渲染在 DOM 里时直接合并保存，不再从头滚一遍。
+    if (mergeCurrent()) {
+      console.log(LOG_PREFIX + " 检测到延迟加载，已直接合并新航班。");
+      flush().then(function () {
+        autoCollectStopped = true;
+      });
+      return;
+    }
+
     console.log(LOG_PREFIX + " 检测到延迟加载，补采一轮。");
     autoCollectAll(true);
   }
